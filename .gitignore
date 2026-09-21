@@ -1,0 +1,34 @@
+# IDE
+.vscode/
+.idea/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+dist/
+build/
+
+# Project specific
+tmp/
+typings/
+# Cloned and patched by firmware/build.sh on demand (micropython v1.29.0
+# + espsr-integration.patch); never committed.
+firmware/micropython/
+
+*.bin
+*.tar
+*.zip
+
+# Virtual environments
+.venv/
+venv/
+
+# pytest cache
+.pytest_cache/
+
+# ruff cache
+.ruff_cache/
+
+AGENTS.md

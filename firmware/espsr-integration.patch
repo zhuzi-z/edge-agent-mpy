@@ -1,0 +1,779 @@
+diff --git a/ports/esp32/boards/ESP32_GENERIC_S3/mpconfigvariant_SPIRAM_OCT_SR.cmake b/ports/esp32/boards/ESP32_GENERIC_S3/mpconfigvariant_SPIRAM_OCT_SR.cmake
+new file mode 100644
+index 0000000..181d0e8
+--- /dev/null
++++ b/ports/esp32/boards/ESP32_GENERIC_S3/mpconfigvariant_SPIRAM_OCT_SR.cmake
+@@ -0,0 +1,15 @@
++# ESP-SR speech-recognition variant for ESP32-S3 N16R8: same Octal-SPIRAM
++# support as the SPIRAM_OCT variant, plus ESP-SR.  Build with:
++#   make BOARD=ESP32_GENERIC_S3 BOARD_VARIANT=SPIRAM_OCT_SR
++list(APPEND SDKCONFIG_DEFAULTS
++    boards/sdkconfig.240mhz
++    boards/sdkconfig.spiram_oct
++    boards/ESP32_GENERIC_S3/sdkconfig.sr
++)
++
++list(APPEND MICROPY_DEF_BOARD
++    MICROPY_HW_BOARD_NAME="Generic ESP32S3 module with Octal-SPIRAM and ESP-SR"
++)
++
++# ESP-SR user C module (AFE + WakeNet on dedicated FreeRTOS tasks).
++set(USER_C_MODULES ${CMAKE_CURRENT_LIST_DIR}/../../espsr/micropython.cmake CACHE INTERNAL "")
+diff --git a/ports/esp32/boards/ESP32_GENERIC_S3/sdkconfig.sr b/ports/esp32/boards/ESP32_GENERIC_S3/sdkconfig.sr
+new file mode 100644
+index 0000000..8ba0a27
+--- /dev/null
++++ b/ports/esp32/boards/ESP32_GENERIC_S3/sdkconfig.sr
+@@ -0,0 +1,11 @@
++# ESP32-S3 N16R8: 16 MiB flash (QIO @ 80 MHz comes from the board's
++# sdkconfig.flash_qio_80m).
++CONFIG_ESPTOOLPY_FLASHSIZE_4MB=
++CONFIG_ESPTOOLPY_FLASHSIZE_16MB=y
++
++# Partition table with a 1 MiB "model" partition for ESP-SR models.
++CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions-16MiB-sr.csv"
++
++# ESP-SR: pack these WakeNet models into srmodels.bin (flashed to "model").
++CONFIG_SR_WN_WN9_HIESP=y
++CONFIG_SR_WN_WN9_HILEXIN=y
+diff --git a/ports/esp32/espsr/micropython.cmake b/ports/esp32/espsr/micropython.cmake
+new file mode 100644
+index 0000000..4469efa
+--- /dev/null
++++ b/ports/esp32/espsr/micropython.cmake
+@@ -0,0 +1,14 @@
++# ESP-SR user module. The esp-sr/esp-dsp components (headers + prebuilt libs)
++# are pulled into the main component via main/idf_component.yml.
++add_library(usermod_espsr INTERFACE)
++
++target_sources(usermod_espsr INTERFACE
++    ${CMAKE_CURRENT_LIST_DIR}/mod_espsr.c
++)
++
++# User-module sources are compiled under the top-level micropython.elf target,
++# which does not inherit IDF component compile definitions.  ESP_PLATFORM is
++# required for FreeRTOS.h to pull in idf_additions.h (xTaskCreatePinnedToCore).
++target_compile_definitions(usermod_espsr INTERFACE ESP_PLATFORM)
++
++target_link_libraries(usermod INTERFACE usermod_espsr)
+diff --git a/ports/esp32/espsr/mod_espsr.c b/ports/esp32/espsr/mod_espsr.c
+new file mode 100644
+index 0000000..cac6336
+--- /dev/null
++++ b/ports/esp32/espsr/mod_espsr.c
+@@ -0,0 +1,609 @@
++/*
++ * ESP-SR (AFE + WakeNet) user module for MicroPython.
++ *
++ * The audio pipeline runs on dedicated FreeRTOS tasks (feed on core 0,
++ * detect on core 1) so the MicroPython VM thread is never blocked.
++ * Python receives results through esp_sr.poll() and/or a callback
++ * registered with esp_sr.on_event().
++ *
++ * Example:
++ *   import esp_sr
++ *   esp_sr.init(sck=4, ws=5, sd=6,               # INMP441-style digital mic
++ *       models="/srmodels.bin")                  # optional: install models from a VFS file
++ *   esp_sr.on_event(lambda ev: print("event", ev))
++ *   while True:
++ *       e = esp_sr.poll()                    # None or (event, value)
++ *       if e and e[0] == esp_sr.EVENT_WAKEUP:
++ *           print("wake word!", e[1])
++ *
++ * Utterance capture (optional): the AFE owns the microphone, so an
++ * application that wants the audio of a speech segment cannot open the I2S
++ * peripheral itself.  esp_sr.capture(True) makes the detect task buffer the
++ * AFE-processed PCM of the current utterance - the VAD pre-roll cache first,
++ * then every frame while the VAD reports speech - into a ring buffer that
++ * esp_sr.read() drains.  Capture stops at VAD end, so the buffer holds
++ * exactly one utterance and no trailing silence:
++ *   if esp_sr.poll()[0] == esp_sr.EVENT_WAKEUP:
++ *       esp_sr.capture(True)                 # False if the buffer is missing
++ *                                            # (see also esp_sr.capture_stats())
++ *       while True:
++ *           for e in iter(esp_sr.poll, None):
++ *               if e[0] == esp_sr.EVENT_VAD_OFF:
++ *                   done = True
++ *           pcm = esp_sr.read(3200, 200)     # up to 200 ms wait, b"" on timeout
++ *           if pcm:
++ *               send_to_asr(pcm)
++ *           if done:
++ *               break
++ *       esp_sr.capture(False)
++ */
++
++#include <string.h>
++
++#include "py/runtime.h"
++#include "py/stream.h"
++#include "extmod/vfs.h"
++#include "mphalport.h"
++
++#include "freertos/FreeRTOS.h"
++#include "freertos/task.h"
++#include "freertos/queue.h"
++#include "freertos/semphr.h"
++#include "driver/i2s_std.h"
++#include "esp_heap_caps.h"
++#include "esp_partition.h"
++
++#include "esp_afe_sr_iface.h"
++#include "esp_afe_sr_models.h"
++#include "model_path.h"
++#include "esp_wn_iface.h"
++#include "esp_wn_models.h"
++#include "esp_vad.h"
++
++enum {
++    ESPSR_EVENT_WAKEUP = 1,     // wake word detected, value = wakenet model index (1-based)
++    ESPSR_EVENT_VAD_ON = 2,     // speech started
++    ESPSR_EVENT_VAD_OFF = 3,    // speech ended
++};
++
++typedef struct {
++    int32_t event;
++    int32_t value;
++} espsr_event_t;
++
++// Utterance capture ring: ~2 s of 16 kHz mono PCM16 by default, which covers
++// the longest stall a consumer is expected to have (a TLS handshake) without
++// losing audio.  PSRAM, because internal RAM is needed for the AFE and TLS.
++#define ESPSR_CAPTURE_DEFAULT_BYTES (64 * 1024)
++#define ESPSR_CAPTURE_MIN_BYTES (4 * 1024)
++#define ESPSR_READ_MAX_BYTES (8 * 1024)
++
++// Single producer (detect task) / single consumer (one MicroPython thread).
++// head is only written by the producer, tail only by the consumer, and both
++// are free-running 32-bit counters, so the difference is exact across wraps
++// and no lock is needed.
++static struct {
++    uint8_t *buf;               // NULL when the allocation failed: no capture
++    uint32_t size;
++    volatile uint32_t head;     // bytes produced
++    volatile uint32_t tail;     // bytes consumed
++    volatile bool on;           // esp_sr.capture(True)
++    volatile bool speech;       // AFE VAD state, gates what gets buffered
++    volatile bool resync;       // capture(True) asked for a VAD restart
++    volatile uint32_t dropped;  // bytes lost because the consumer stalled
++    volatile uint32_t frames;   // AFE frames seen, speech gate ignored
++    SemaphoreHandle_t wake;     // given after a write, taken by esp_sr.read()
++} espsr_cap;
++
++static volatile vad_state_t espsr_vad_state = VAD_SILENCE;
++
++static struct {
++    const esp_afe_sr_iface_t *afe_handle;
++    esp_afe_sr_data_t *afe_data;
++    afe_config_t *afe_config;
++    srmodel_list_t *models;
++    i2s_chan_handle_t i2s_rx;
++    TaskHandle_t feed_task;
++    TaskHandle_t detect_task;
++    QueueHandle_t event_queue;
++    volatile bool running;
++} espsr;
++
++MP_REGISTER_ROOT_POINTER(mp_obj_t espsr_callback);
++
++// Runs on the detect task: queue the event and schedule the Python callback.
++static void espsr_post_event(int32_t event, int32_t value) {
++    if (espsr.event_queue != NULL) {
++        espsr_event_t ev = {event, value};
++        xQueueSend(espsr.event_queue, &ev, 0);      // drop oldest-style: drop new if full
++    }
++    if (MP_STATE_VM(espsr_callback) != MP_OBJ_NULL && MP_STATE_VM(espsr_callback) != mp_const_none) {
++        mp_sched_schedule(MP_STATE_VM(espsr_callback), MP_OBJ_NEW_SMALL_INT(event));
++    }
++}
++
++// I2S mic -> AFE, pinned to core 0.
++static void espsr_feed_task(void *arg) {
++    int shift = (int)(uintptr_t)arg;
++    int chunk = espsr.afe_handle->get_feed_chunksize(espsr.afe_data);
++    int16_t *pcm = heap_caps_malloc(chunk * sizeof(int16_t), MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
++    int32_t *raw = heap_caps_malloc(chunk * sizeof(int32_t), MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
++    if (pcm != NULL && raw != NULL) {
++        while (espsr.running) {
++            size_t bytes_read = 0;
++            esp_err_t err = i2s_channel_read(espsr.i2s_rx, raw, chunk * sizeof(int32_t),
++                &bytes_read, pdMS_TO_TICKS(1000));
++            if (err == ESP_OK && bytes_read == chunk * sizeof(int32_t)) {
++                for (int i = 0; i < chunk; i++) {
++                    pcm[i] = (int16_t)(raw[i] >> shift);
++                }
++                espsr.afe_handle->feed(espsr.afe_data, pcm);
++            }
++        }
++    }
++    heap_caps_free(pcm);
++    heap_caps_free(raw);
++    espsr.feed_task = NULL;
++    vTaskDelete(NULL);
++}
++
++// Runs on the detect task: append captured audio, then wake a blocked reader.
++// On overflow the newest bytes are dropped (the consumer stalled for longer
++// than the ring covers) and counted, so a stall can never corrupt the ring.
++static void espsr_cap_write(const void *data, uint32_t len) {
++    if (espsr_cap.buf == NULL || !espsr_cap.on || !espsr_cap.speech || len == 0) {
++        return;
++    }
++    uint32_t head = espsr_cap.head;
++    uint32_t space = espsr_cap.size - (head - espsr_cap.tail);
++    if (len > space) {
++        espsr_cap.dropped += len - space;
++        len = space;
++    }
++    if (len == 0) {
++        return;
++    }
++    const uint8_t *src = data;
++    uint32_t idx = head % espsr_cap.size;
++    uint32_t first = espsr_cap.size - idx;
++    if (first > len) {
++        first = len;
++    }
++    memcpy(espsr_cap.buf + idx, src, first);
++    if (len > first) {
++        memcpy(espsr_cap.buf, src + first, len - first);
++    }
++    espsr_cap.head = head + len;        // published last: the bytes are in place
++    if (espsr_cap.wake != NULL) {
++        xSemaphoreGive(espsr_cap.wake);
++    }
++}
++
++// AFE fetch loop (runs the WakeNet/VAD inference), pinned to core 1.
++static void espsr_detect_task(void *arg) {
++    vad_state_t last_vad = VAD_SILENCE;
++    while (espsr.running) {
++        afe_fetch_result_t *res = espsr.afe_handle->fetch(espsr.afe_data);
++        if (res == NULL || res->ret_value == ESP_FAIL) {
++            continue;
++        }
++        espsr_vad_state = res->vad_state;
++        if (res->wakeup_state == WAKENET_DETECTED) {
++            espsr_post_event(ESPSR_EVENT_WAKEUP, res->wakenet_model_index);
++        }
++        if (espsr_cap.resync) {
++            // capture(True) arms a fresh segment, and the VAD is usually still
++            // holding the audio that woke us: the wake word itself, or the echo
++            // of a reply whose playback tail just ended. Left alone, that
++            // already-open segment gets buffered and committed as the user's
++            // utterance. Restart the VAD here, on the fetch task, so dropping
++            // this frame cannot race the thread that armed the capture. The
++            // wakeup above is still delivered: it is what armed us.
++            espsr_cap.resync = false;
++            if (espsr.afe_handle->reset_vad != NULL) {
++                espsr.afe_handle->reset_vad(espsr.afe_data);
++            }
++            last_vad = VAD_SILENCE;
++            espsr_vad_state = VAD_SILENCE;
++            continue;                   // this frame is pre-arm audio
++        }
++        if (res->vad_state != last_vad) {
++            last_vad = res->vad_state;
++            if (last_vad == VAD_SPEECH) {
++                // Open the segment, announce it, then start it with the AFE's
++                // pre-roll cache so the first syllable is not cut. The event
++                // goes out first: a reader woken by the write below runs on the
++                // other core and must never see audio it cannot attribute to a
++                // segment yet.
++                espsr_cap.speech = true;
++                espsr_post_event(ESPSR_EVENT_VAD_ON, 0);
++                if (res->vad_cache != NULL && res->vad_cache_size > 0) {
++                    espsr_cap_write(res->vad_cache, (uint32_t)res->vad_cache_size);
++                }
++            } else {
++                // Close the segment first, so the ring already holds the whole
++                // utterance by the time Python sees the event.
++                espsr_cap.speech = false;
++                espsr_post_event(ESPSR_EVENT_VAD_OFF, 0);
++            }
++        }
++        if (res->data != NULL && res->data_size > 0) {
++            // Counted even while the speech gate is closed: a capture that
++            // never sees a frame means the AFE pipeline itself is stalled,
++            // which is indistinguishable from silence otherwise.
++            if (espsr_cap.on) {
++                espsr_cap.frames++;
++            }
++            espsr_cap_write(res->data, (uint32_t)res->data_size);
++        }
++    }
++    espsr.detect_task = NULL;
++    vTaskDelete(NULL);
++}
++
++static void espsr_shutdown(void) {
++    espsr.running = false;
++    espsr_cap.on = false;
++    espsr_cap.speech = false;
++    // fetch() may block up to 2 s; wait for both tasks to exit.
++    for (int i = 0; i < 50 && (espsr.feed_task != NULL || espsr.detect_task != NULL); i++) {
++        vTaskDelay(pdMS_TO_TICKS(100));
++    }
++    if (espsr.i2s_rx != NULL) {
++        i2s_channel_disable(espsr.i2s_rx);
++        i2s_del_channel(espsr.i2s_rx);
++        espsr.i2s_rx = NULL;
++    }
++    if (espsr.afe_data != NULL) {
++        espsr.afe_handle->destroy(espsr.afe_data);
++        espsr.afe_data = NULL;
++    }
++    if (espsr.afe_config != NULL) {
++        afe_config_free(espsr.afe_config);
++        espsr.afe_config = NULL;
++    }
++    if (espsr.models != NULL) {
++        esp_srmodel_deinit(espsr.models);
++        espsr.models = NULL;
++    }
++    if (espsr.event_queue != NULL) {
++        vQueueDelete(espsr.event_queue);
++        espsr.event_queue = NULL;
++    }
++    // Both tasks have exited, so nothing can touch the ring any more.
++    if (espsr_cap.wake != NULL) {
++        vSemaphoreDelete(espsr_cap.wake);
++        espsr_cap.wake = NULL;
++    }
++    if (espsr_cap.buf != NULL) {
++        heap_caps_free(espsr_cap.buf);
++        espsr_cap.buf = NULL;
++    }
++    espsr_cap.head = 0;
++    espsr_cap.tail = 0;
++    espsr_cap.dropped = 0;
++    espsr_cap.frames = 0;
++    espsr_vad_state = VAD_SILENCE;
++    MP_STATE_VM(espsr_callback) = mp_const_none;
++}
++
++// Copy a srmodels.bin image from a VFS file into the "model" flash partition
++// (esp-sr can only load models from an IDF partition, not from MicroPython's
++// filesystem).  Rewrites only 64 KiB chunks that differ, so calling it again
++// with the same file is a flash no-op.
++static void espsr_install_models(mp_obj_t path_obj) {
++    const esp_partition_t *part = esp_partition_find_first(
++        ESP_PARTITION_TYPE_DATA, ESP_PARTITION_SUBTYPE_ANY, "model");
++    if (part == NULL) {
++        mp_raise_msg(&mp_type_RuntimeError, MP_ERROR_TEXT("esp_sr: 'model' partition not found"));
++    }
++    mp_obj_t open_args[2] = { path_obj, MP_OBJ_NEW_QSTR(MP_QSTR_rb) };
++    mp_obj_t file = mp_vfs_open(MP_ARRAY_SIZE(open_args), open_args, (mp_map_t *)&mp_const_empty_map);
++    const size_t chunk = 64 * 1024;
++    uint8_t *fbuf = m_new(uint8_t, chunk);
++    uint8_t *pbuf = m_new(uint8_t, chunk);
++    size_t offset = 0;
++    for (;;) {
++        int errcode;
++        mp_uint_t n = mp_stream_rw(file, fbuf, chunk, &errcode, MP_STREAM_RW_READ);
++        if (errcode != 0) {
++            mp_raise_OSError(errcode);
++        }
++        if (n == 0) {
++            break;
++        }
++        if (offset + n > part->size) {
++            mp_raise_ValueError(MP_ERROR_TEXT("srmodels image larger than 'model' partition"));
++        }
++        check_esp_err(esp_partition_read(part, offset, pbuf, n));
++        if (memcmp(fbuf, pbuf, n) != 0) {
++            check_esp_err(esp_partition_erase_range(part, offset, (n + 4095) & ~(size_t)4095));
++            check_esp_err(esp_partition_write(part, offset, fbuf, n));
++        }
++        offset += n;
++        if (n < chunk) {
++            break;
++        }
++    }
++    mp_stream_close(file);
++    m_del(uint8_t, fbuf, chunk);
++    m_del(uint8_t, pbuf, chunk);
++}
++
++// esp_sr.init(*, sck, ws, sd, i2s_num=0, shift=14, high_perf=False, models=None,
++//             capture_buf=65536, vad_min_noise_ms=-1, vad_delay_ms=-1)
++static mp_obj_t espsr_init(size_t n_args, const mp_obj_t *pos_args, mp_map_t *kw_args) {
++    enum { ARG_sck, ARG_ws, ARG_sd, ARG_i2s_num, ARG_shift, ARG_high_perf, ARG_models,
++           ARG_capture_buf, ARG_vad_min_noise_ms, ARG_vad_delay_ms };
++    static const mp_arg_t allowed_args[] = {
++        { MP_QSTR_sck, MP_ARG_REQUIRED | MP_ARG_INT, {.u_int = -1} },   // I2S BCLK
++        { MP_QSTR_ws, MP_ARG_REQUIRED | MP_ARG_INT, {.u_int = -1} },    // I2S WS/LRCK
++        { MP_QSTR_sd, MP_ARG_REQUIRED | MP_ARG_INT, {.u_int = -1} },    // I2S data in
++        { MP_QSTR_i2s_num, MP_ARG_INT, {.u_int = 0} },
++        { MP_QSTR_shift, MP_ARG_INT, {.u_int = 14} },                   // 32-bit slot -> int16
++        { MP_QSTR_high_perf, MP_ARG_BOOL, {.u_bool = false} },          // AFE high-performance mode
++        { MP_QSTR_models, MP_ARG_OBJ, {.u_rom_obj = MP_ROM_NONE} },     // VFS path of srmodels.bin
++        { MP_QSTR_capture_buf, MP_ARG_INT, {.u_int = ESPSR_CAPTURE_DEFAULT_BYTES} },
++        { MP_QSTR_vad_min_noise_ms, MP_ARG_INT, {.u_int = -1} },        // -1: keep the esp-sr default
++        { MP_QSTR_vad_delay_ms, MP_ARG_INT, {.u_int = -1} },            // -1: keep the esp-sr default
++    };
++    mp_arg_val_t args[MP_ARRAY_SIZE(allowed_args)];
++    mp_arg_parse_all(n_args, pos_args, kw_args, MP_ARRAY_SIZE(allowed_args), allowed_args, args);
++
++    if (espsr.running || espsr.afe_data != NULL) {
++        mp_raise_msg(&mp_type_RuntimeError, MP_ERROR_TEXT("esp_sr already initialised"));
++    }
++
++    // Optionally install/refresh the model partition from a file first.
++    if (args[ARG_models].u_obj != mp_const_none) {
++        espsr_install_models(args[ARG_models].u_obj);
++    }
++
++    // Speech models live in the "model" flash partition (see partitions-16MiB-sr.csv).
++    espsr.models = esp_srmodel_init("model");
++    if (espsr.models == NULL) {
++        mp_raise_msg(&mp_type_RuntimeError, MP_ERROR_TEXT("esp_sr: 'model' partition not found"));
++    }
++    char *wn_name = esp_srmodel_filter(espsr.models, ESP_WN_PREFIX, NULL);
++    if (wn_name == NULL) {
++        espsr_shutdown();
++        mp_raise_msg(&mp_type_RuntimeError, MP_ERROR_TEXT("esp_sr: no WakeNet model packed (enable CONFIG_SR_WN_WN9_*)"));
++    }
++
++    espsr.afe_config = afe_config_init("M", espsr.models, AFE_TYPE_SR,
++        args[ARG_high_perf].u_bool ? AFE_MODE_HIGH_PERF : AFE_MODE_LOW_COST);
++    espsr.afe_config->aec_init = false;                 // single mic, no playback reference
++    espsr.afe_config->wakenet_model_name = wn_name;
++    espsr.afe_config->memory_alloc_mode = AFE_MEMORY_ALLOC_MORE_PSRAM;
++    // The VAD is what tells the application where an utterance starts and
++    // ends, so it is always on; its two timing knobs are exposed because they
++    // set how much trailing silence is waited through (vad_min_noise_ms) and
++    // how much pre-roll the VAD cache keeps (vad_delay_ms).
++    espsr.afe_config->vad_init = true;
++    if (args[ARG_vad_min_noise_ms].u_int >= 0) {
++        espsr.afe_config->vad_min_noise_ms = args[ARG_vad_min_noise_ms].u_int;
++    }
++    if (args[ARG_vad_delay_ms].u_int >= 0) {
++        espsr.afe_config->vad_delay_ms = args[ARG_vad_delay_ms].u_int;
++    }
++    espsr.afe_handle = esp_afe_handle_from_config(espsr.afe_config);
++    espsr.afe_data = espsr.afe_handle->create_from_config(espsr.afe_config);
++    if (espsr.afe_data == NULL) {
++        espsr_shutdown();
++        mp_raise_msg(&mp_type_RuntimeError, MP_ERROR_TEXT("esp_sr: AFE create failed"));
++    }
++
++    // Digital microphone input (16 kHz mono, 32-bit I2S slots).
++    i2s_chan_config_t chan_cfg = I2S_CHANNEL_DEFAULT_CONFIG(args[ARG_i2s_num].u_int, I2S_ROLE_MASTER);
++    chan_cfg.auto_clear = true;
++    i2s_std_config_t std_cfg = {
++        .clk_cfg = I2S_STD_CLK_DEFAULT_CONFIG(16000),
++        .slot_cfg = I2S_STD_PHILIPS_SLOT_DEFAULT_CONFIG(I2S_DATA_BIT_WIDTH_32BIT, I2S_SLOT_MODE_MONO),
++        .gpio_cfg = {
++            .mclk = I2S_GPIO_UNUSED,
++            .bclk = args[ARG_sck].u_int,
++            .ws = args[ARG_ws].u_int,
++            .dout = I2S_GPIO_UNUSED,
++            .din = args[ARG_sd].u_int,
++            .invert_flags = {.mclk_inv = false, .bclk_inv = false, .ws_inv = false},
++        },
++    };
++    std_cfg.slot_cfg.slot_mask = I2S_STD_SLOT_LEFT;
++    if (i2s_new_channel(&chan_cfg, NULL, &espsr.i2s_rx) != ESP_OK
++        || i2s_channel_init_std_mode(espsr.i2s_rx, &std_cfg) != ESP_OK
++        || i2s_channel_enable(espsr.i2s_rx) != ESP_OK) {
++        espsr_shutdown();
++        mp_raise_msg(&mp_type_OSError, MP_ERROR_TEXT("esp_sr: I2S init failed"));
++    }
++
++    // Utterance capture ring.  Optional: when the allocation fails, capture()
++    // reports False and the caller can fall back to reading the microphone
++    // itself (which means giving up the AFE, it cannot share the I2S port).
++    uint32_t cap_bytes = (uint32_t)args[ARG_capture_buf].u_int;
++    if (cap_bytes < ESPSR_CAPTURE_MIN_BYTES) {
++        cap_bytes = ESPSR_CAPTURE_MIN_BYTES;
++    }
++    espsr_cap.buf = heap_caps_malloc(cap_bytes, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
++    if (espsr_cap.buf == NULL) {
++        espsr_cap.buf = heap_caps_malloc(cap_bytes, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
++    }
++    if (espsr_cap.buf != NULL) {
++        espsr_cap.size = cap_bytes;
++        espsr_cap.head = 0;
++        espsr_cap.tail = 0;
++        espsr_cap.dropped = 0;
++        espsr_cap.frames = 0;
++        espsr_cap.on = false;
++        espsr_cap.speech = false;
++        espsr_cap.resync = false;
++        espsr_cap.wake = xSemaphoreCreateBinary();
++    }
++
++    // 16 slots: VAD transitions are queued alongside wakeups, and a full queue
++    // silently drops the newest event - which must never be a wakeup.
++    espsr.event_queue = xQueueCreate(16, sizeof(espsr_event_t));
++    espsr.running = true;
++    BaseType_t ok1 = xTaskCreatePinnedToCore(espsr_feed_task, "sr_feed", 4 * 1024,
++        (void *)(uintptr_t)args[ARG_shift].u_int, 5, &espsr.feed_task, 0);
++    BaseType_t ok2 = xTaskCreatePinnedToCore(espsr_detect_task, "sr_detect", 8 * 1024,
++        NULL, 5, &espsr.detect_task, 1);
++    if (ok1 != pdPASS || ok2 != pdPASS) {
++        espsr_shutdown();
++        mp_raise_msg(&mp_type_OSError, MP_ERROR_TEXT("esp_sr: task create failed"));
++    }
++    return mp_const_none;
++}
++MP_DEFINE_CONST_FUN_OBJ_KW(espsr_init_obj, 0, espsr_init);
++
++static mp_obj_t espsr_deinit(void) {
++    espsr_shutdown();
++    return mp_const_none;
++}
++static MP_DEFINE_CONST_FUN_OBJ_0(espsr_deinit_obj, espsr_deinit);
++
++// esp_sr.poll() -> None or (event, value)
++static mp_obj_t espsr_poll(void) {
++    espsr_event_t ev;
++    if (espsr.event_queue != NULL && xQueueReceive(espsr.event_queue, &ev, 0) == pdTRUE) {
++        mp_obj_t items[2] = {MP_OBJ_NEW_SMALL_INT(ev.event), MP_OBJ_NEW_SMALL_INT(ev.value)};
++        return mp_obj_new_tuple(2, items);
++    }
++    return mp_const_none;
++}
++static MP_DEFINE_CONST_FUN_OBJ_0(espsr_poll_obj, espsr_poll);
++
++// esp_sr.capture(on) -> bool: False when the capture buffer is unavailable.
++static mp_obj_t espsr_capture(mp_obj_t on_obj) {
++    if (!mp_obj_is_true(on_obj)) {
++        espsr_cap.on = false;
++        return mp_obj_new_bool(true);
++    }
++    if (espsr_cap.buf == NULL || !espsr.running) {
++        return mp_obj_new_bool(false);
++    }
++    espsr_cap.on = false;                   // stop the producer before flushing
++    espsr_cap.tail = espsr_cap.head;        // drop any previous segment
++    espsr_cap.dropped = 0;
++    espsr_cap.frames = 0;
++    // A fresh segment always starts from a real VAD onset: speech already
++    // running when capture is armed is the wake word or a playback tail, not
++    // the utterance to recognise. The detect task restarts the VAD, so whoever
++    // is still talking re-triggers it after vad_min_speech_ms and the pre-roll
++    // cache keeps their first syllable.
++    espsr_cap.speech = false;
++    espsr_cap.resync = true;
++    espsr_cap.on = true;
++    return mp_obj_new_bool(true);
++}
++static MP_DEFINE_CONST_FUN_OBJ_1(espsr_capture_obj, espsr_capture);
++
++// esp_sr.read(nbytes=1024, timeout_ms=200) -> bytes; b"" when nothing arrived.
++// Returns as soon as the ring holds any audio (a partial read is normal: the
++// AFE delivers 32 ms frames), so the caller loops until the segment is done.
++static mp_obj_t espsr_read(size_t n_args, const mp_obj_t *args) {
++    mp_int_t want = n_args > 0 ? mp_obj_get_int(args[0]) : 1024;
++    mp_int_t timeout_ms = n_args > 1 ? mp_obj_get_int(args[1]) : 200;
++    if (want <= 0 || espsr_cap.buf == NULL) {
++        return mp_const_empty_bytes;
++    }
++    if (want > ESPSR_READ_MAX_BYTES) {
++        want = ESPSR_READ_MAX_BYTES;
++    }
++    vstr_t vstr;
++    vstr_init_len(&vstr, want);
++    uint32_t got = 0;
++    // The port has no millisecond tick counter; the unsigned 32-bit us
++    // difference wraps correctly for any wait a caller would ask for.
++    uint32_t start_us = mp_hal_ticks_us();
++    // The GIL is released while waiting so the other MicroPython threads (HTTP
++    // server, agent) keep running while the microphone fills the ring.
++    MP_THREAD_GIL_EXIT();
++    for (;;) {
++        uint32_t avail = espsr_cap.head - espsr_cap.tail;
++        if (avail != 0) {
++            uint32_t n = avail < (uint32_t)want ? avail : (uint32_t)want;
++            uint32_t idx = espsr_cap.tail % espsr_cap.size;
++            uint32_t first = espsr_cap.size - idx;
++            if (first > n) {
++                first = n;
++            }
++            memcpy(vstr.buf, espsr_cap.buf + idx, first);
++            if (n > first) {
++                memcpy(vstr.buf + first, espsr_cap.buf, n - first);
++            }
++            espsr_cap.tail += n;            // consumed last: producer may reuse the space
++            got = n;
++            break;
++        }
++        uint32_t elapsed_ms = (mp_hal_ticks_us() - start_us) / 1000;
++        if (timeout_ms <= 0 || elapsed_ms >= (uint32_t)timeout_ms) {
++            break;
++        }
++        // CONFIG_FREERTOS_HZ is 100, so a sub-10 ms wait rounds to zero ticks:
++        // always wait at least one tick instead of spinning.
++        TickType_t ticks = pdMS_TO_TICKS((uint32_t)timeout_ms - elapsed_ms);
++        if (ticks == 0) {
++            ticks = 1;
++        }
++        if (espsr_cap.wake != NULL) {
++            xSemaphoreTake(espsr_cap.wake, ticks);
++        } else {
++            vTaskDelay(ticks);
++        }
++    }
++    MP_THREAD_GIL_ENTER();
++    mp_obj_t out = mp_obj_new_bytes((const byte *)vstr.buf, got);
++    vstr_clear(&vstr);
++    return out;
++}
++static MP_DEFINE_CONST_FUN_OBJ_VAR_BETWEEN(espsr_read_obj, 0, 2, espsr_read);
++
++// esp_sr.capture_stats() -> (frames, dropped_bytes) since capture(True).
++// frames counts AFE frames whether or not the speech gate let them through,
++// so zero frames means the pipeline delivered nothing at all.
++static mp_obj_t espsr_capture_stats(void) {
++    mp_obj_t items[2] = {
++        MP_OBJ_NEW_SMALL_INT(espsr_cap.frames),
++        MP_OBJ_NEW_SMALL_INT(espsr_cap.dropped),
++    };
++    return mp_obj_new_tuple(2, items);
++}
++static MP_DEFINE_CONST_FUN_OBJ_0(espsr_capture_stats_obj, espsr_capture_stats);
++
++// esp_sr.on_event(cb): cb(event) is scheduled on the VM thread for every event.
++static mp_obj_t espsr_on_event(mp_obj_t cb) {
++    if (cb != mp_const_none && !mp_obj_is_callable(cb)) {
++        mp_raise_ValueError(MP_ERROR_TEXT("callback must be callable or None"));
++    }
++    MP_STATE_VM(espsr_callback) = cb;
++    return mp_const_none;
++}
++static MP_DEFINE_CONST_FUN_OBJ_1(espsr_on_event_obj, espsr_on_event);
++
++static mp_obj_t espsr_running(void) {
++    return mp_obj_new_bool(espsr.running);
++}
++static MP_DEFINE_CONST_FUN_OBJ_0(espsr_running_obj, espsr_running);
++
++static const mp_rom_map_elem_t esp_sr_module_globals_table[] = {
++    { MP_ROM_QSTR(MP_QSTR___name__), MP_ROM_QSTR(MP_QSTR_esp_sr) },
++    { MP_ROM_QSTR(MP_QSTR_init), MP_ROM_PTR(&espsr_init_obj) },
++    { MP_ROM_QSTR(MP_QSTR_deinit), MP_ROM_PTR(&espsr_deinit_obj) },
++    { MP_ROM_QSTR(MP_QSTR_poll), MP_ROM_PTR(&espsr_poll_obj) },
++    { MP_ROM_QSTR(MP_QSTR_on_event), MP_ROM_PTR(&espsr_on_event_obj) },
++    { MP_ROM_QSTR(MP_QSTR_running), MP_ROM_PTR(&espsr_running_obj) },
++    { MP_ROM_QSTR(MP_QSTR_capture), MP_ROM_PTR(&espsr_capture_obj) },
++    { MP_ROM_QSTR(MP_QSTR_read), MP_ROM_PTR(&espsr_read_obj) },
++    { MP_ROM_QSTR(MP_QSTR_capture_stats), MP_ROM_PTR(&espsr_capture_stats_obj) },
++    { MP_ROM_QSTR(MP_QSTR_EVENT_WAKEUP), MP_ROM_INT(ESPSR_EVENT_WAKEUP) },
++    { MP_ROM_QSTR(MP_QSTR_EVENT_VAD_ON), MP_ROM_INT(ESPSR_EVENT_VAD_ON) },
++    { MP_ROM_QSTR(MP_QSTR_EVENT_VAD_OFF), MP_ROM_INT(ESPSR_EVENT_VAD_OFF) },
++};
++static MP_DEFINE_CONST_DICT(esp_sr_module_globals, esp_sr_module_globals_table);
++
++const mp_obj_module_t esp_sr_module = {
++    .base = { &mp_type_module },
++    .globals = (mp_obj_dict_t *)&esp_sr_module_globals,
++};
++
++MP_REGISTER_MODULE(MP_QSTR_esp_sr, esp_sr_module);
+diff --git a/ports/esp32/lockfiles/dependencies.lock.esp32s3 b/ports/esp32/lockfiles/dependencies.lock.esp32s3
+index a57ac9a..1064f01 100644
+--- a/ports/esp32/lockfiles/dependencies.lock.esp32s3
++++ b/ports/esp32/lockfiles/dependencies.lock.esp32s3
+@@ -1,4 +1,56 @@
+ dependencies:
++  espressif/cjson:
++    component_hash: e788323270d90738662d66fffa910bfe1fba019bba087f01557e70c40485b469
++    dependencies:
++    - name: idf
++      require: private
++      version: '>=5.0'
++    source:
++      registry_url: https://components.espressif.com
++      type: service
++    version: 1.7.19~2
++  espressif/dl_fft:
++    component_hash: a955ca29581de2177ddf25759273bd83f082b3c805e735fe6ee105858643989b
++    dependencies:
++    - name: idf
++      require: private
++      version: '>=5.0'
++    source:
++      registry_url: https://components.espressif.com
++      type: service
++    version: 0.6.0
++  espressif/esp-dsp:
++    component_hash: 12e44db246517a627bc0fe2b255b8335410c0215c98bfba2df5a8e3edea839ef
++    dependencies:
++    - name: idf
++      require: private
++      version: '>=4.2'
++    source:
++      registry_url: https://components.espressif.com
++      type: service
++    version: 1.8.0
++  espressif/esp-sr:
++    component_hash: 809d0041cdddd98a278f0d5afef7bb60a451290577b98cf718dfffc91bdcbd9b
++    dependencies:
++    - name: espressif/cjson
++      registry_url: https://components.espressif.com
++      require: private
++      version: ^1.7.19
++    - name: espressif/dl_fft
++      registry_url: https://components.espressif.com
++      require: private
++      version: '>=0.6.0'
++    - name: espressif/esp-dsp
++      registry_url: https://components.espressif.com
++      require: private
++      version: 1.8.0
++    - name: idf
++      require: private
++      version: '>=5.0'
++    source:
++      registry_url: https://components.espressif.com/
++      type: service
++    version: 2.4.7
+   espressif/mdns:
+     component_hash: 31117d76cae83a6d83ffd7f035f6fdae5bd05b914fc30b641afeb208b84de19a
+     dependencies:
+@@ -27,11 +79,12 @@ dependencies:
+   idf:
+     source:
+       type: idf
+-    version: 5.5.2
++    version: 5.5.5
+ direct_dependencies:
++- espressif/esp-sr
+ - espressif/mdns
+ - espressif/tinyusb
+ - idf
+-manifest_hash: 135591912bdd610e3288fb8e418f83f05825b2ad683bbd749a57be0ca3752ab2
++manifest_hash: f76a46d4bcbb2a18c872510e8441d14570bd3d27ea980b61557f4735a3b71c7f
+ target: esp32s3
+ version: 2.0.0
+diff --git a/ports/esp32/main/idf_component.yml b/ports/esp32/main/idf_component.yml
+index ddd7cb2..7700692 100644
+--- a/ports/esp32/main/idf_component.yml
++++ b/ports/esp32/main/idf_component.yml
+@@ -21,5 +21,11 @@ dependencies:
+     version: "~1.0.0"
+     rules:
+       - if: "target == esp32"
++  # ESP-SR (WakeNet/AFE) from the Espressif component registry; satisfies
++  # the esp_sr user C module in ports/esp32/espsr (BOARD_VARIANT=SR).
++  espressif/esp-sr:
++    version: "~2.4.7"
++    rules:
++      - if: "target in [esp32s3, esp32p4]"
+   idf:
+     version: ">=5.3.0"
+diff --git a/ports/esp32/partitions-16MiB-sr.csv b/ports/esp32/partitions-16MiB-sr.csv
+new file mode 100644
+index 0000000..74a7566
+--- /dev/null
++++ b/ports/esp32/partitions-16MiB-sr.csv
+@@ -0,0 +1,8 @@
++# MicroPython + ESP-SR partition table for 16 MiB flash.
++# "model" holds srmodels.bin (packed by the esp-sr component at build time).
++# Name,   Type, SubType, Offset,   Size,      Flags
++nvs,      data, nvs,     0x9000,   0x6000,
++phy_init, data, phy,     0xf000,   0x1000,
++factory,  app,  factory, 0x10000,  0x2F0000,
++vfs,      data, fat,     0x300000, 0xC00000,
++model,    data, spiffs,  0xF00000, 0x100000,

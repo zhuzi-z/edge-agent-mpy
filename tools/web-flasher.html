@@ -1,0 +1,465 @@
+<!DOCTYPE html>
+<html lang="en"><!-- the head script below overrides lang from the saved choice or the browser -->
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<title>Edge Agent · Flasher</title>
+<script>(function(){try{var s=localStorage.getItem('esp32-ui.theme');var d=s==='dark'||(!s&&matchMedia('(prefers-color-scheme:dark)').matches);if(d)document.documentElement.classList.add('dark');}catch(e){}})();</script>
+<script>(function(){try{var l=localStorage.getItem('esp32-ui.lang');if(l!=='zh'&&l!=='en')l=/^zh/i.test(navigator.language||'')?'zh':'en';document.documentElement.lang=l==='zh'?'zh-CN':'en';}catch(e){}})();</script>
+<style>
+  /* Same design tokens as src/app/web/index.html */
+  :root{
+    color-scheme:light;
+    --background:0 0% 100%; --foreground:240 3% 12%;
+    --card:0 0% 100%; --primary:240 4% 16%; --primary-foreground:0 0% 98%;
+    --secondary:0 0% 96.1%; --secondary-foreground:0 0% 9%;
+    --muted:0 0% 96.1%; --muted-foreground:0 0% 45.1%;
+    --accent:0 0% 96.1%; --destructive:0 84.2% 60.2%;
+    --border:40 8% 90.5%; --input:40 8% 90.5%; --ring:0 0% 3.9%;
+    --radius:0.5rem;
+    --hi:142 71% 45%; --shadow-sm:0 1px 2px hsl(0 0% 0% / .05);
+  }
+  .dark{
+    color-scheme:dark;
+    --background:0 0% 15%; --foreground:240 4% 96%;
+    --card:0 0% 19%; --primary:240 5% 98%; --primary-foreground:0 0% 9%;
+    --secondary:0 0% 22%; --secondary-foreground:0 0% 98%;
+    --muted:0 0% 22%; --muted-foreground:0 0% 63%;
+    --accent:0 0% 25%; --destructive:0 62.8% 30.6%;
+    --border:0 0% 27%; --input:0 0% 27%; --ring:0 0% 83.1%;
+    --shadow-sm:0 1px 2px hsl(0 0% 0% / .3);
+  }
+  *{box-sizing:border-box;scrollbar-width:thin;scrollbar-color:hsl(var(--muted-foreground)/.3) transparent}
+  html,body{height:100%;margin:0}
+  body{background:hsl(var(--background));color:hsl(var(--foreground));font-size:14px;line-height:1.5;
+    font-family:system-ui,-apple-system,"Segoe UI",Roboto,"PingFang SC","Microsoft YaHei",sans-serif;-webkit-font-smoothing:antialiased}
+  /* Theme toggle fades the structural surfaces instead of snapping */
+  body,.card{transition:background-color .18s ease,border-color .18s ease,color .18s ease}
+
+  .inner{max-width:760px;margin:0 auto;padding:24px 20px 40px}
+  header{margin-bottom:18px}
+  header h1{margin:0;font-size:1.02rem;font-weight:650;letter-spacing:-.01em}
+  header p{margin:0;font-size:.72rem;color:hsl(var(--muted-foreground))}
+  .hrow{display:flex;align-items:flex-start;justify-content:space-between;gap:6px 12px;flex-wrap:wrap}
+  .langbtn{flex:none;margin-top:2px;padding:3px 11px;font-size:.72rem}
+  .pill{display:inline-flex;align-items:center;gap:7px;margin-left:10px;vertical-align:1px;
+    font-weight:400;font-size:.72rem;color:hsl(var(--muted-foreground))}
+  .dot{width:7px;height:7px;border-radius:9999px;background:hsl(var(--muted-foreground)/.5)}
+  .dot.ok{background:hsl(var(--hi));box-shadow:0 0 6px hsl(var(--hi)/.7)}
+
+  .card{background:hsl(var(--card));border:1px solid hsl(var(--border));border-radius:calc(var(--radius) + 8px);
+    padding:16px 18px;margin-bottom:14px;box-shadow:var(--shadow-sm)}
+  .card h2{margin:0 0 12px;font-size:.78rem;font-weight:650;color:hsl(var(--muted-foreground));
+    text-transform:uppercase;letter-spacing:.06em}
+  .note{font-size:.76rem;color:hsl(var(--muted-foreground));margin:10px 0 0}
+  .steps{margin:0;padding-left:20px;font-size:.78rem;line-height:1.6;color:hsl(var(--muted-foreground))}
+  .steps li{margin-bottom:8px}
+  /* Chinese body copy needs a little more leading than English at these sizes */
+  html[lang|="zh"] .note,html[lang|="zh"] .steps{line-height:1.8}
+  .facts{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:4px}
+  .fact{display:flex;gap:8px;border:1px solid hsl(var(--border));border-radius:9999px;background:hsl(var(--secondary));padding:6px 13px}
+  .fact b{font-weight:600;font-variant-numeric:tabular-nums}
+  .fact span{font-size:.7rem;color:hsl(var(--muted-foreground))}
+  button{border:0;border-radius:9999px;padding:7px 15px;background:hsl(var(--primary));color:hsl(var(--primary-foreground));
+    cursor:pointer;font:inherit;font-size:.8rem;font-weight:550;box-shadow:var(--shadow-sm);transition:opacity .12s,transform .12s}
+  button:hover{opacity:.88}
+  button:active:not(:disabled){transform:scale(.96)}
+  button:disabled{opacity:.45;cursor:default}
+  button.ghost{background:hsl(var(--secondary));color:hsl(var(--secondary-foreground));border:1px solid hsl(var(--border));box-shadow:none}
+  select{background:hsl(var(--background));border:1px solid hsl(var(--input));border-radius:var(--radius);
+    padding:6px 10px;font:inherit;font-size:.82rem;color:inherit;outline:none;transition:border-color .12s,box-shadow .12s}
+  select:focus{border-color:hsl(var(--ring));box-shadow:0 0 0 3px hsl(var(--ring)/.12)}
+  .row{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-top:12px}
+  .stxt{font-size:.75rem;color:hsl(var(--muted-foreground))}
+  .stxt.err{color:hsl(var(--destructive))}
+  .stxt.ok{color:hsl(var(--hi))}
+  .mono{font-family:ui-monospace,Menlo,Consolas,monospace}
+
+  .frow{display:grid;grid-template-columns:88px 1fr;gap:10px;align-items:center;padding:9px 11px;margin-bottom:8px;
+    border:1px solid hsl(var(--border));border-radius:calc(var(--radius) + 2px);background:hsl(var(--secondary));
+    transition:border-color .12s}
+  .frow:hover{border-color:hsl(var(--muted-foreground)/.45)}
+  .frow .off{font-size:.78rem;color:hsl(var(--muted-foreground))}
+  details{margin:0 0 8px;padding-top:9px;border-top:1px solid hsl(var(--border))}
+  summary{font-size:.76rem;color:hsl(var(--muted-foreground));cursor:pointer;user-select:none}
+  summary:hover{color:hsl(var(--foreground))}
+  details[open] summary{margin-bottom:9px}
+  .fpick{display:flex;align-items:baseline;gap:9px;min-width:0;cursor:pointer}
+  .fpick input{position:absolute;width:1px;height:1px;opacity:0;pointer-events:none}
+  .fpick .name{font-size:.8rem;color:hsl(var(--muted-foreground));white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .frow.has .fpick .name{color:hsl(var(--primary));text-decoration:underline;text-underline-offset:2px}
+  .fpick .size{font-size:.72rem;color:hsl(var(--muted-foreground));font-variant-numeric:tabular-nums}
+  .prog{display:flex;gap:8px;align-items:center;grid-column:1/-1}
+  .prog[hidden]{display:none}
+  .prog i{flex:1;height:8px;border-radius:9999px;background:hsl(var(--muted));border:1px solid hsl(var(--border));overflow:hidden}
+  .prog i b{display:block;height:100%;width:0;background:hsl(var(--hi));transition:width .2s}
+  .prog s{text-decoration:none;font-size:.72rem;color:hsl(var(--muted-foreground));font-variant-numeric:tabular-nums;min-width:64px;text-align:right}
+
+  .term{max-height:220px;overflow:auto;margin:0;padding:11px 13px;background:hsl(var(--muted));border:1px solid hsl(var(--border));
+    border-radius:calc(var(--radius) + 6px);font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.75rem;
+    line-height:1.6;white-space:pre-wrap;word-break:break-word}
+  .term .err{color:hsl(var(--destructive))}
+  .term .dim{color:hsl(var(--muted-foreground))}
+
+  #doneCard{animation:fadeup .25s ease}
+  @keyframes fadeup{from{opacity:0;transform:translateY(6px)}}
+  @media(prefers-reduced-motion:reduce){#doneCard{animation:none}}
+</style>
+</head>
+<body>
+<div class="inner">
+  <header>
+    <div class="hrow">
+      <h1><span data-i18n="h1">Edge Agent Flasher</span><span class="pill"><i class="dot" id="dot"></i><span id="portText" data-i18n="notConnected">Not connected</span></span></h1>
+      <button class="ghost langbtn" id="langBtn" type="button" data-i18n="langBtn" data-i18n-attr="title:langBtnTitle">中文</button>
+    </div>
+    <p data-i18n="tagline">Write the firmware to an ESP32-S3 from the browser, no toolchain to install.</p>
+  </header>
+
+  <div class="card">
+    <h2 data-i18n="deviceCard">Device</h2>
+    <div class="facts">
+      <span class="fact"><span data-i18n="factChip">Chip</span><b id="cChip">—</b></span>
+      <span class="fact"><span data-i18n="factFlash">Flash</span><b id="cFlash">—</b></span>
+      <span class="fact"><span>MAC</span><b id="cMac">—</b></span>
+    </div>
+    <div class="row">
+      <button id="detectBtn" data-i18n="detectBtn">Connect &amp; Detect</button>
+      <select id="fBaud" title="Flash baud rate" data-i18n-attr="title:baudTitle"><option>115200</option><option>921600</option></select>
+      <span class="stxt" id="status"></span>
+    </div>
+    <p class="note" data-i18n-html="noteDownloadMode">The browser cannot reset the chip over the native USB port (USB‑JTAG / MicroPython CDC), so enter download mode by hand first: <b>hold BOOT, tap RESET, then release BOOT</b>. A UART bridge with the DTR/RTS auto-reset circuit does not need this step.</p>
+  </div>
+
+  <div class="card">
+    <h2 data-i18n="imagesCard">Images (click to choose a file; rows without one are not written)</h2>
+    <div id="files"></div>
+    <details>
+      <summary data-i18n="partsSummary">Per-partition images (advanced)</summary>
+      <div id="parts"></div>
+    </details>
+    <div class="row">
+      <button id="flashBtn" disabled data-i18n="flashBtn">Start Flashing</button>
+      <span class="stxt" data-i18n="flashHint">Flash 16MB; the read/write mode comes from each image</span>
+    </div>
+    <p class="note" data-i18n-html="noteErase">Both flashing options rebuild the app filesystem partition, so the data under <span class="mono">/config</span> (WiFi settings), <span class="mono">/data</span> and <span class="mono">/skills</span> is erased; <span class="mono">app-fs.bin</span> only leaves the bootloader and model partitions alone. To update the app on a device that is already configured, use Firmware Update (OTA) in the WebUI — it replaces <span class="mono">/app</span> only.</p>
+  </div>
+
+  <div class="card">
+    <h2 data-i18n="outputCard">Output</h2>
+    <pre class="term" id="term"><span class="dim" data-i18n="termHint">The bootloader output shows up here once you connect.</span></pre>
+  </div>
+
+  <div class="card" id="doneCard" hidden>
+    <h2 data-i18n="doneCard">Flash Complete</h2>
+    <ol class="steps">
+      <li data-i18n-html="doneStep1">If the device did not restart, <b>press the RESET button on the board</b>: the browser can only reset the chip through the RTS line, which the native USB port does not carry, so the chip stays in download mode.</li>
+      <li data-i18n-html="doneStep2">The images carry no WiFi credentials, and a wired flash clears the settings already on the device. Once it boots, it opens the setup hotspot <b class="mono">EdgeAgent-Setup</b> (no password, for about 5 minutes); joining it usually opens the setup page in your browser by itself — if it does not, use the button below.</li>
+    </ol>
+    <div class="row">
+      <button id="openPortal" data-i18n="openPortal">Open the Setup Page</button>
+    </div>
+  </div>
+
+</div>
+
+<script type="module">
+const $ = (s) => document.querySelector(s);
+const ESPTOOL = 'https://cdn.jsdelivr.net/npm/esptool-js@0.6.1/bundle.js';
+// The device's own AP (config.AP_SSID) serves the portal at this address.
+const PORTAL = 'http://192.168.4.1/';
+
+/* Bilingual UI.  Every string the page shows is a key into I18N: the markup
+   carries it as data-i18n (text), data-i18n-html (text with inline markup) or
+   data-i18n-attr="attr:key;…" (attributes), and the code below goes through
+   t().  The language follows the browser the first time and is then remembered
+   beside the theme preference, so the two behave the same way.  {name}
+   placeholders are filled in after the lookup, never by concatenation, because
+   the two languages do not share word order. */
+const I18N = {
+  en: {
+    pageTitle: 'Edge Agent · Flasher',
+    h1: 'Edge Agent Flasher',
+    tagline: 'Write the firmware to an ESP32-S3 from the browser, no toolchain to install.',
+    langBtn: '中文',
+    langBtnTitle: 'Switch to Chinese',
+    deviceCard: 'Device',
+    factChip: 'Chip',
+    factFlash: 'Flash',
+    detectBtn: 'Connect & Detect',
+    baudTitle: 'Flash baud rate',
+    noteDownloadMode: 'The browser cannot reset the chip over the native USB port (USB‑JTAG / MicroPython CDC), so enter download mode by hand first: <b>hold BOOT, tap RESET, then release BOOT</b>. A UART bridge with the DTR/RTS auto-reset circuit does not need this step.',
+    imagesCard: 'Images (click to choose a file; rows without one are not written)',
+    partsSummary: 'Per-partition images (advanced)',
+    flashBtn: 'Start Flashing',
+    flashHint: 'Flash 16MB; the read/write mode comes from each image',
+    noteErase: 'Both flashing options rebuild the app filesystem partition, so the data under <span class="mono">/config</span> (WiFi settings), <span class="mono">/data</span> and <span class="mono">/skills</span> is erased; <span class="mono">app-fs.bin</span> only leaves the bootloader and model partitions alone. To update the app on a device that is already configured, use Firmware Update (OTA) in the WebUI — it replaces <span class="mono">/app</span> only.',
+    outputCard: 'Output',
+    termHint: 'The bootloader output shows up here once you connect.',
+    doneCard: 'Flash Complete',
+    doneStep1: 'If the device did not restart, <b>press the RESET button on the board</b>: the browser can only reset the chip through the RTS line, which the native USB port does not carry, so the chip stays in download mode.',
+    doneStep2: 'The images carry no WiFi credentials, and a wired flash clears the settings already on the device. Once it boots, it opens the setup hotspot <b class="mono">EdgeAgent-Setup</b> (no password, for about 5 minutes); joining it usually opens the setup page in your browser by itself — if it does not, use the button below.',
+    openPortal: 'Open the Setup Page',
+    labelFull: 'Full image',
+    labelFirmware: 'Firmware',
+    labelApp: 'App',
+    labelModels: 'Models',
+    notConnected: 'Not connected',
+    stLoading: 'Loading esptool-js…',
+    stLibFailed: 'Could not load the flash library: {msg}',
+    stSelectPort: 'Select a port…',
+    stHandshake: 'Handshake…',
+    stConnected: 'Connected',
+    stDetectFailed: 'Detect failed: {msg}',
+    stReading: 'Reading images…',
+    stRowReading: 'Reading',
+    stFlashing: 'Flashing…',
+    stDone: 'Flash complete',
+    stFlashFailed: 'Flash failed: {msg}',
+    logFlashFailed: '!! Flash failed: {msg}',
+    stNoSerial: 'Needs Chrome or Edge, and this page must be opened over http://127.0.0.1 or https (Web Serial requires a secure context)',
+  },
+  zh: {
+    pageTitle: 'Edge Agent · 烧录工具',
+    h1: 'Edge Agent 烧录工具',
+    tagline: '用浏览器把固件写进 ESP32-S3，不需要安装任何工具链。',
+    langBtn: 'EN',
+    langBtnTitle: '切换到英文',
+    deviceCard: '设备',
+    factChip: '芯片',
+    factFlash: '闪存',
+    detectBtn: '连接并检测',
+    baudTitle: '烧录波特率',
+    noteDownloadMode: '浏览器无法通过原生 USB 口（USB‑JTAG / MicroPython CDC）复位芯片，所以请先手动进入下载模式：<b>按住 BOOT，点按 RESET，再松开 BOOT</b>。带 DTR/RTS 自动复位电路的 UART 转接板不需要这一步。',
+    imagesCard: '镜像（点击选择文件；没有选文件的行不会被写入）',
+    partsSummary: '按分区单独烧录（高级）',
+    flashBtn: '开始烧录',
+    flashHint: '闪存 16MB；读写模式取自镜像自身',
+    noteErase: '两种烧录方式都会重建 app 文件系统分区，因此 <span class="mono">/config</span>（WiFi 设置）、<span class="mono">/data</span> 和 <span class="mono">/skills</span> 下的数据会被清除；只有 <span class="mono">app-fs.bin</span> 不动引导程序分区和模型分区。要更新一台已经配好网的设备，请用 WebUI 里的 Firmware Update（OTA）——它只替换 <span class="mono">/app</span>。',
+    outputCard: '输出',
+    termHint: '连接成功后，引导程序的输出会显示在这里。',
+    doneCard: '烧录完成',
+    doneStep1: '如果设备没有自动重启，<b>请按一下板子上的 RESET 键</b>：浏览器只能通过 RTS 线复位芯片，而原生 USB 口不带这根线，所以芯片会停在下载模式。',
+    doneStep2: '镜像里不含 WiFi 凭据，有线烧录也会清掉设备上原有的设置。启动后它会开出配网热点 <b class="mono">EdgeAgent-Setup</b>（无密码，约持续 5 分钟）；连上它通常会自动在浏览器里打开配网页面——如果没有，就点下面的按钮。',
+    openPortal: '打开配网页面',
+    labelFull: '整片镜像',
+    labelFirmware: '固件',
+    labelApp: '应用',
+    labelModels: '模型',
+    notConnected: '未连接',
+    stLoading: '正在加载 esptool-js…',
+    stLibFailed: '无法加载烧录库：{msg}',
+    stSelectPort: '请选择串口…',
+    stHandshake: '正在握手…',
+    stConnected: '已连接',
+    stDetectFailed: '检测失败：{msg}',
+    stReading: '正在读取镜像…',
+    stRowReading: '读取中',
+    stFlashing: '正在烧录…',
+    stDone: '烧录完成',
+    stFlashFailed: '烧录失败：{msg}',
+    logFlashFailed: '!! 烧录失败：{msg}',
+    stNoSerial: '需要使用 Chrome 或 Edge，并且必须通过 http://127.0.0.1 或 https 打开本页（Web Serial 要求安全上下文）',
+  },
+};
+
+let LANG = (function () {
+  try {
+    const saved = localStorage.getItem('esp32-ui.lang');
+    if (saved === 'zh' || saved === 'en') return saved;
+  } catch (e) {}
+  return /^zh/i.test(navigator.language || '') ? 'zh' : 'en';
+})();
+// The last dynamic texts, so switching language can redraw what is on screen
+// rather than only what is still in the markup.
+let lastStatus = null, lastConn = null;
+
+function t(key, params) {
+  let s = I18N[LANG][key];
+  if (s === undefined) s = I18N.en[key];
+  if (s === undefined) return key;
+  for (const name in (params || {})) s = s.split('{' + name + '}').join(params[name]);
+  return s;
+}
+
+function applyI18n() {
+  // Read with getAttribute rather than el.dataset: the camelCase mapping of a
+  // dashed name that also holds a digit (data-i18n -> i18n) is exactly the kind
+  // of thing that differs between DOM implementations, and these are directives
+  // read once, not data.
+  document.querySelectorAll('[data-i18n]').forEach((el) => { el.textContent = t(el.getAttribute('data-i18n')); });
+  // Values are authored here, never taken from input, so the markup form is safe.
+  document.querySelectorAll('[data-i18n-html]').forEach((el) => { el.innerHTML = t(el.getAttribute('data-i18n-html')); });
+  document.querySelectorAll('[data-i18n-attr]').forEach((el) => {
+    el.getAttribute('data-i18n-attr').split(';').forEach((pair) => {
+      const at = pair.split(':');
+      if (at.length === 2 && at[0].trim()) el.setAttribute(at[0].trim(), t(at[1].trim()));
+    });
+  });
+  document.title = t('pageTitle');
+  renderStatus();
+  renderConn();
+  renderRows();
+}
+// Setting the language only redraws; persisting it is a separate step so that a
+// first visit keeps following the browser instead of freezing the detection.
+function applyLang() {
+  document.documentElement.lang = LANG === 'zh' ? 'zh-CN' : 'en';
+  applyI18n();
+}
+function setLang(lang) {
+  LANG = lang === 'zh' ? 'zh' : 'en';
+  try { localStorage.setItem('esp32-ui.lang', LANG); } catch (e) {}
+  applyLang();
+}
+applyLang();
+
+// Images this project ships. Offsets are from partitions-16MiB-sr.csv; the
+// merged image already contains all three. The middle column is an I18N key,
+// the last one a file-name pattern, which is the same in both languages.
+const FULL = [[0x000000, 'labelFull', 'edge-agent-mpy-v*.bin']];
+const PARTS = [[0x000000, 'labelFirmware', 'ESP32_GENERIC_S3-SPIRAM_OCT-*.bin'],
+               [0x300000, 'labelApp', 'app-fs.bin'],
+               [0xF00000, 'labelModels', 'srmodels-*.bin']];
+
+function renderStatus() {
+  if (!lastStatus) return;
+  $('#status').textContent = t(lastStatus.key, lastStatus.params);
+  $('#status').className = 'stxt' + (lastStatus.cls ? ' ' + lastStatus.cls : '');
+}
+function renderConn() {
+  if (!lastConn) return;
+  $('#dot').className = 'dot' + (lastConn.on ? ' ok' : '');
+  $('#portText').textContent = lastConn.on ? lastConn.what : t('notConnected');
+}
+function renderRows() {
+  document.querySelectorAll('.frow').forEach((row) => {
+    if (row.querySelector('input').files[0]) return;  // a picked file name is not ours to translate
+    row.querySelector('.name').textContent = t(row.dataset.labelKey) + ' · ' + row.dataset.sample;
+  });
+}
+function status(key, params, cls) { lastStatus = { key, params, cls }; renderStatus(); }
+function connected(on, what) { lastConn = { on, what }; renderConn(); }
+
+/* esptool-js hands the bootloader's own text to this terminal; a flash run is
+   short, so the append-only cap is only there to bound a chatty handshake. */
+const term = $('#term');
+function log(text, kind) {
+  const span = document.createElement('span');
+  if (kind) span.className = kind;
+  span.textContent = String(text);
+  term.appendChild(span);
+  while (term.childNodes.length > 800) term.firstChild.remove();
+  term.scrollTop = term.scrollHeight;
+}
+
+let port = null;
+async function takePort() {
+  if (port) await port.close().catch(() => {});
+  port = await navigator.serial.requestPort();
+  return port;
+}
+
+let esp = null, transport = null;
+function addRow(where, [addr, labelKey, sample]) {
+  const row = document.createElement('div');
+  row.className = 'frow';
+  row.dataset.addr = addr;
+  row.dataset.labelKey = labelKey;
+  row.dataset.sample = sample;
+  row.innerHTML = '<span class="off mono">0x' + addr.toString(16).padStart(6, '0') + '</span>' +
+    '<label class="fpick"><input type="file" accept=".bin"><span class="name"></span><span class="size"></span></label>' +
+    '<span class="prog" hidden><i><b></b></i><s></s></span>';
+  const name = row.querySelector('.name');
+  name.textContent = t(labelKey) + ' · ' + sample;
+  row.querySelector('input').onchange = (e) => {
+    const f = e.target.files[0];
+    row.classList.toggle('has', !!f);
+    name.textContent = f ? f.name : t(labelKey) + ' · ' + sample;
+    row.querySelector('.size').textContent = f ? (f.size / 1048576).toFixed(2) + ' MiB' : '';
+    row.querySelector('.prog').hidden = !f;
+    updateFlashBtn();
+  };
+  $(where).appendChild(row);
+}
+FULL.forEach((a) => addRow('#files', a));
+PARTS.forEach((a) => addRow('#parts', a));
+const picked = () => [...document.querySelectorAll('.frow')].filter((r) => r.querySelector('input').files[0]);
+
+function updateFlashBtn() {
+  $('#flashBtn').disabled = !esp || !picked().length;
+}
+$('#detectBtn').onclick = async () => {
+  status('stLoading');
+  let ESP;
+  try { ESP = await import(ESPTOOL); } catch (e) { status('stLibFailed', { msg: e.message }, 'err'); return; }
+  status('stSelectPort');
+  try {
+    await takePort();
+    transport = new ESP.Transport(port, false);
+    esp = new ESP.ESPLoader({ transport, baudrate: +$('#fBaud').value,
+      terminal: { clean() {}, write: (d) => log(d), writeLine: (d) => log(d + '\n') } });
+    status('stHandshake');
+    await esp.main();
+    $('#cChip').textContent = await esp.chip.getChipDescription(esp);
+    $('#cFlash').textContent = await esp.detectFlashSize();
+    $('#cMac').textContent = await esp.chip.readMac(esp);
+    // 'bootloader' names the ROM monitor that answers over the port; it is the
+    // same word in both languages and the one the log below uses.
+    connected(true, 'bootloader');
+    status('stConnected', null, 'ok');
+  } catch (e) {
+    esp = null;
+    transport = null;
+    if (port) await port.close().catch(() => {});
+    port = null;
+    status('stDetectFailed', { msg: e.message }, 'err');
+  }
+  updateFlashBtn();
+};
+$('#flashBtn').onclick = async () => {
+  const rows = picked();
+  try {
+    status('stReading');
+    const fileArray = [];
+    for (const r of rows) {
+      const f = r.querySelector('input').files[0];
+      r.querySelector('s').textContent = t('stRowReading');
+      fileArray.push({ data: new Uint8Array(await f.arrayBuffer()), address: +r.dataset.addr });
+    }
+    status('stFlashing');
+    await esp.writeFlash({
+      fileArray, flashMode: 'keep', flashFreq: 'keep', flashSize: '16MB',
+      eraseAll: false, compress: true,
+      reportProgress: (i, written, total) => {
+        const r = rows[i];
+        const pct = total ? (written / total) * 100 : 0;
+        r.querySelector('b').style.width = pct.toFixed(1) + '%';
+        r.querySelector('s').textContent = pct.toFixed(0) + '%';
+      },
+    });
+    await esp.after('hard_reset');
+    $('#doneCard').hidden = false;
+    status('stDone', null, 'ok');
+  } catch (e) {
+    status('stFlashFailed', { msg: e.message }, 'err');
+    log(t('logFlashFailed', { msg: e.message }) + '\n', 'err');
+  }
+  if (transport) await transport.disconnect().catch(() => {});
+  esp = null;
+  transport = null;
+  port = null;
+  connected(false);
+  updateFlashBtn();
+};
+$('#openPortal').onclick = () => window.open(PORTAL, '_blank');
+$('#langBtn').onclick = () => setLang(LANG === 'zh' ? 'en' : 'zh');
+
+if (!('serial' in navigator) || !window.isSecureContext) {
+  $('#detectBtn').disabled = true;
+  status('stNoSerial', null, 'err');
+}
+</script>
+</body>
+</html>

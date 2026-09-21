@@ -1,0 +1,27 @@
+{
+  "name": "voice_control",
+  "description": "Control the voice conversation session. action=exit: end the current voice conversation and let the device return to wake-word standby. Call this when the user semantically asks to leave/dismiss you or says goodbye (in any language), e.g. asking you to stand down, saying they are done for now, or bidding farewell. Do NOT call it when leaving/exiting is part of another request (e.g. asking how to log out of an account). The farewell you pass in 'ack' is spoken aloud to the user; your following text reply is NOT spoken, so keep it minimal. action=volume: read or change the device speaker volume while talking. Call this when the user asks to turn the volume up/down, set a specific level, or says your voice is too loud/quiet (input comes from speech recognition, so interpret homophone typos charitably). Pass level (0-100) for an absolute target, or adjust for a relative step (use 10 / -10 when the user just says louder/quieter without a number); omit both to only report the current volume. The change is persisted and takes effect immediately, including for your spoken confirmation, so answer with one short spoken-style sentence stating the new volume.",
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "action": {
+        "type": "string",
+        "enum": ["exit", "volume"],
+        "description": "exit = end the voice conversation; volume = get/set the device speaker volume"
+      },
+      "ack": {
+        "type": "string",
+        "description": "For action=exit only: a very short farewell spoken aloud to the user, in the user's language with a warm natural tone, one short sentence, e.g. 'Sure, talk to you later' or 'Okay, I'll be here if you need me'."
+      },
+      "level": {
+        "type": "integer",
+        "description": "For action=volume only: absolute speaker volume, 0-100"
+      },
+      "adjust": {
+        "type": "integer",
+        "description": "For action=volume only: relative change, e.g. 10 (louder) or -10 (quieter)"
+      }
+    },
+    "required": ["action"]
+  }
+}

@@ -1,0 +1,46 @@
+{
+  "name": "mijia-ha",
+  "description": "Control Mijia smart devices through Xiaomi's Home-Assistant OAuth2 API (plain HTTPS + Bearer, no encryption). action=login: start QR login; the device hosts a local page and returns the URL http://<device-IP>/mijia-ha/ — the user opens it in a browser on the same WiFi and scans with the Mi Home app; the device walks the OAuth chain itself and saves access_token + refresh_token, then keeps them fresh automatically. action=token: report the saved credential, refresh it when near expiry, and verify it with one Bearer call. action=list_devices: list account devices (name/did/model/online/room), cached on-device; reuse known did/model for later get_prop/set_prop, pass refresh=true only when the user asks to refresh or a device seems missing. action=device_spec: query a model's properties (lines: siid.piid name, Chinese description, format, rw flags, range/enums), cached per model; optional filter keyword narrows large specs. action=get_prop: read — single did+siid+piid, or batch did+props=[{siid,piid},...] returning one line per property. action=set_prop: write — single did+siid+piid+value, or batch did+props=[{siid,piid,value},...]. ALWAYS batch: several properties of one device are ONE call, never one call per property (reading an AC's on+mode+temp+fan = one get_prop; turning it on + cooling + 26C = one set_prop). Flow: list_devices once → device_spec → get_prop/set_prop, then reuse the cached did. [Rules] NEVER guess siid/piid — read them from device_spec first; if device_spec fails twice, tell the user instead of probing. get/set results annotate error codes (property does not exist, device offline, ...) — on such errors stop probing and re-check device_spec or the device state. [Output] put the login URL in a triple-backtick code block and tell the user to open it and scan with the Mi Home app; never use [text](url) markdown.",
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "action": {
+        "type": "string",
+        "enum": ["login", "token", "list_devices", "device_spec", "get_prop", "set_prop"],
+        "description": "The action to perform"
+      },
+      "model": {
+        "type": "string",
+        "description": "Device model, e.g. yeelink.light.lamp4 (required for action=device_spec)"
+      },
+      "did": {
+        "type": "string",
+        "description": "Device did (required for get_prop/set_prop, obtained from list_devices)"
+      },
+      "siid": {
+        "type": "integer",
+        "description": "Service ID (single-property get_prop/set_prop only, obtained from device_spec; for several properties use props instead)"
+      },
+      "piid": {
+        "type": "integer",
+        "description": "Property ID (single-property get_prop/set_prop only, obtained from device_spec; for several properties use props instead)"
+      },
+      "value": {
+        "description": "Value to set (required for set_prop). Use true/false for booleans, numbers for numeric values, text for strings"
+      },
+      "refresh": {
+        "type": "boolean",
+        "description": "For action=list_devices only: force re-querying the cloud and updating the local device cache (use when the user asks to refresh/update the device list)"
+      },
+      "props": {
+        "type": "array",
+        "description": "Batch mode for get_prop and set_prop: list of {\"siid\": int, \"piid\": int} to read, or {\"siid\": int, \"piid\": int, \"value\": any} to write; all items go to the same did in ONE cloud request. Required whenever more than one property of a device is involved (e.g. read AC on+mode+temp+fan, or turn AC on + cooling + 26C + low fan)."
+      },
+      "filter": {
+        "type": "string",
+        "description": "For action=device_spec only: optional keyword; when given, only properties whose name/description contains it are returned (use to shrink large specs, e.g. filter='温度')"
+      }
+    },
+    "required": ["action"]
+  }
+}

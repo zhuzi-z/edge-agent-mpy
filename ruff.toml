@@ -1,0 +1,22 @@
+target-version = "py311"
+line-length = 99
+src = ["src", "tests"]
+exclude = ["tmp", ".venv"]
+
+[format]
+quote-style = "double"
+
+[lint]
+select = ["E", "F", "W"]
+ignore = [
+    "F401",   # __init__.py re-exports; MicroPython injected globals
+    "F821",   # builtin_skills use exec'd globals
+    "E501",   # line length handled by formatter
+]
+
+[lint.per-file-ignores]
+"tests/*" = ["E501"]
+"tests/launch/*" = ["E402"]
+"tests/e2e/*" = ["E402"]
+"tests/fake_llm_server.py" = ["E741"]
+"tests/mpy/*" = ["F841"]

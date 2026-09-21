@@ -1,0 +1,19 @@
+{
+  "name": "gpio",
+  "description": "Control the output level of a specified GPIO pin (on = high, off = low, toggle = flip). Can drive peripherals connected to GPIO, e.g. an LED on GPIO38 — when the user says 'turn on the LED on gpio38', call this tool with pin=38, action=on.",
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "pin": {
+        "type": "integer",
+        "description": "GPIO pin number, e.g. 38"
+      },
+      "action": {
+        "type": "string",
+        "enum": ["on", "off", "toggle"],
+        "description": "Action: on = drive high, off = drive low, toggle = flip current level"
+      }
+    },
+    "required": ["pin", "action"]
+  }
+}

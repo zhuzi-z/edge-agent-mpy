@@ -1,0 +1,1945 @@
+<!DOCTYPE html>
+<html lang="en"><!-- the head script below overrides lang from the saved choice or the browser -->
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<title>Edge Agent</title>
+<script>(function(){try{var s=localStorage.getItem('esp32-ui.theme');var d=s==='dark'||(!s&&matchMedia('(prefers-color-scheme:dark)').matches);if(d)document.documentElement.classList.add('dark');}catch(e){}})();</script>
+<script>(function(){try{var l=localStorage.getItem('esp32-ui.lang');if(l!=='zh'&&l!=='en')l=/^zh/i.test(navigator.language||'')?'zh':'en';document.documentElement.lang=l==='zh'?'zh-CN':'en';}catch(e){}})();</script>
+<style>
+  /* Design tokens — shadcn/ui "neutral" palette, ported from nanobot webui globals.css */
+  :root{
+    color-scheme:light;
+    --background:0 0% 100%; --foreground:240 3% 12%;
+    --card:0 0% 100%; --card-foreground:240 3% 12%;
+    --popover:0 0% 100%; --popover-foreground:240 3% 12%;
+    --primary:240 4% 16%; --primary-foreground:0 0% 98%;
+    --secondary:0 0% 96.1%; --secondary-foreground:0 0% 9%;
+    --muted:0 0% 96.1%; --muted-foreground:0 0% 45.1%;
+    --accent:0 0% 96.1%; --accent-foreground:0 0% 9%;
+    --destructive:0 84.2% 60.2%; --destructive-foreground:0 0% 98%;
+    --border:40 8% 90.5%; --input:40 8% 90.5%; --ring:0 0% 3.9%;
+    --radius:0.5rem;
+    --sidebar:40 8% 96.8%; --sidebar-foreground:0 0% 3.9%;
+    --sidebar-accent:0 0% 95.8%; --sidebar-border:40 8% 90.5%;
+    --hi:142 71% 45%;
+    --shadow-sm:0 1px 2px hsl(0 0% 0% / .05);
+    --shadow-md:0 6px 18px hsl(0 0% 0% / .07);
+    --shadow-pop:0 10px 28px hsl(0 0% 0% / .16);
+  }
+  .dark{
+    color-scheme:dark;
+    --background:0 0% 15%; --foreground:240 4% 96%;
+    --card:0 0% 19%; --card-foreground:240 4% 96%;
+    --popover:0 0% 19%; --popover-foreground:240 4% 96%;
+    --primary:240 5% 98%; --primary-foreground:0 0% 9%;
+    --secondary:0 0% 22%; --secondary-foreground:0 0% 98%;
+    --muted:0 0% 22%; --muted-foreground:0 0% 63%;
+    --accent:0 0% 25%; --accent-foreground:0 0% 98%;
+    --destructive:0 62.8% 30.6%; --destructive-foreground:0 0% 98%;
+    --border:0 0% 27%; --input:0 0% 27%; --ring:0 0% 83.1%;
+    --sidebar:0 0% 12.5%; --sidebar-foreground:0 0% 98%;
+    --sidebar-accent:0 0% 19%; --sidebar-border:0 0% 24%;
+    --hi:142 71% 45%;
+    --shadow-sm:0 1px 2px hsl(0 0% 0% / .3);
+    --shadow-md:0 6px 18px hsl(0 0% 0% / .35);
+    --shadow-pop:0 10px 28px hsl(0 0% 0% / .5);
+  }
+  *{box-sizing:border-box}
+  html,body{height:100%;margin:0}
+  body{
+    background:hsl(var(--background));color:hsl(var(--foreground));
+    font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"PingFang SC","Microsoft YaHei",sans-serif;
+    font-size:14px;line-height:1.5;-webkit-font-smoothing:antialiased;
+  }
+  /* Theme toggle fades the structural surfaces instead of snapping */
+  body,.sidebar,.topbar,.card,.chat-shell,.modal,.scanbanner{transition:background-color .18s ease,border-color .18s ease,color .18s ease}
+  ::selection{background:hsl(var(--primary)/.15)}
+  *{scrollbar-width:thin;scrollbar-color:hsl(var(--muted-foreground)/.3) transparent}
+  *::-webkit-scrollbar{width:8px;height:8px}
+  *::-webkit-scrollbar-track{background:transparent}
+  *::-webkit-scrollbar-thumb{background:hsl(var(--muted-foreground)/.3);border-radius:9999px}
+  *::-webkit-scrollbar-thumb:hover{background:hsl(var(--muted-foreground)/.45)}
+  svg.ic{width:16px;height:16px;flex-shrink:0;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
+  @media(prefers-reduced-motion:reduce){*,*::before,*::after{animation-duration:.01ms!important;transition-duration:.01ms!important}
+    .chat{scroll-behavior:auto}}
+
+  .app{display:flex;height:100vh;height:100dvh;overflow:hidden}
+
+  /* ---------- Sidebar ---------- */
+  .sidebar{width:232px;flex-shrink:0;background:hsl(var(--sidebar));border-right:1px solid hsl(var(--sidebar-border));
+    display:flex;flex-direction:column;padding:14px 10px 10px}
+  .brand{display:flex;align-items:center;gap:10px;padding:4px 8px 16px;font-weight:600;font-size:.95rem;letter-spacing:-.01em}
+  .brand .logo{width:28px;height:28px;border-radius:8px;background:hsl(var(--primary));color:hsl(var(--primary-foreground));
+    display:flex;align-items:center;justify-content:center;flex-shrink:0;box-shadow:var(--shadow-sm)}
+  .brand .logo svg.ic{width:16px;height:16px;stroke-width:1.8}
+  .brand em{font-style:normal;color:hsl(var(--muted-foreground));font-weight:500}
+  .nav{display:flex;flex-direction:column;gap:2px;flex:1}
+  .nav button{position:relative;display:flex;align-items:center;gap:10px;width:100%;padding:8px 10px;border:0;
+    border-radius:calc(var(--radius) + 2px);background:transparent;color:hsl(var(--sidebar-foreground));cursor:pointer;
+    font:inherit;font-size:.875rem;text-align:left;transition:background .12s,color .12s}
+  .nav button:hover{background:hsl(var(--sidebar-accent))}
+  .nav button.active{background:hsl(var(--sidebar-accent));font-weight:600}
+  .nav button.active::before{content:"";position:absolute;left:-10px;top:20%;bottom:20%;width:3px;border-radius:0 3px 3px 0;
+    background:hsl(var(--foreground));opacity:.65}
+  .nav .ic{opacity:.75}
+  .nav button.active .ic{opacity:1}
+  .sidebar-foot{display:flex;align-items:center;justify-content:space-between;padding:9px 6px 2px;
+    border-top:1px solid hsl(var(--sidebar-border));margin-top:8px}
+  .pill{display:inline-flex;align-items:center;gap:7px;font-size:.75rem;color:hsl(var(--muted-foreground));padding:0 6px}
+  .dot{width:7px;height:7px;border-radius:9999px;background:hsl(var(--muted-foreground)/.5);flex-shrink:0}
+  .dot.ok{background:hsl(var(--hi));box-shadow:0 0 6px hsl(var(--hi)/.7)}
+  .dot.bad{background:hsl(var(--destructive))}
+  .iconbtn{border:0;background:transparent;color:hsl(var(--muted-foreground));cursor:pointer;padding:6px;
+    border-radius:calc(var(--radius));display:inline-flex;transition:background .12s,color .12s}
+  .iconbtn:hover{background:hsl(var(--sidebar-accent));color:hsl(var(--foreground))}
+  .footbtns{display:inline-flex;align-items:center;gap:2px}
+  .langbtn{border:0;background:transparent;color:hsl(var(--muted-foreground));cursor:pointer;padding:5px 8px;
+    border-radius:calc(var(--radius));font:inherit;font-size:.72rem;font-weight:650;line-height:1;
+    transition:background .12s,color .12s}
+  .langbtn:hover{background:hsl(var(--sidebar-accent));color:hsl(var(--foreground))}
+  #themeBtn .sun{display:none}
+  .dark #themeBtn .sun{display:block}
+  .dark #themeBtn .moon{display:none}
+
+  /* ---------- Main ---------- */
+  .main{flex:1;display:flex;flex-direction:column;min-width:0;min-height:0;background:hsl(var(--background))}
+  .topbar{display:flex;align-items:center;gap:12px;padding:13px 20px;border-bottom:1px solid hsl(var(--border));flex-wrap:wrap;flex-shrink:0;
+    background:hsl(var(--background))}
+  .scanbanner{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:9px 20px;flex-shrink:0;
+    background:hsl(46 100% 94%);border-bottom:1px solid hsl(45 92% 72%);color:hsl(33 90% 30%);font-size:.8rem}
+  .scanbanner[hidden]{display:none}
+  .dark .scanbanner{background:hsl(42 55% 18%);border-bottom-color:hsl(43 55% 32%);color:hsl(45 92% 70%)}
+  .scanbanner .ic{width:15px;height:15px;flex-shrink:0}
+  .sb-x{margin-left:auto;border:0;background:transparent;color:inherit;font-size:1.05rem;line-height:1;
+    cursor:pointer;padding:2px 6px;border-radius:6px}
+  .sb-x:hover{background:hsl(45 92% 72% / .35)}
+  @keyframes attn{0%,100%{box-shadow:0 0 0 0 hsl(45 92% 60% / 0)}50%{box-shadow:0 0 0 4px hsl(45 92% 60% / .45)}}
+  .urlbox.attn{animation:attn .9s ease 2;border-color:hsl(45 80% 55%)}
+  .tb-title{flex:1;min-width:140px}
+  .tb-title h1{margin:0;font-size:1.02rem;font-weight:650;letter-spacing:-.01em}
+  .tb-sub{margin:0;font-size:.72rem;color:hsl(var(--muted-foreground))}
+  .urlbox{display:flex;align-items:center;gap:7px;background:hsl(var(--background));border:1px solid hsl(var(--input));
+    border-radius:9999px;padding:6px 12px;color:hsl(var(--muted-foreground));transition:border-color .12s,box-shadow .12s}
+  .urlbox:focus-within{border-color:hsl(var(--ring));box-shadow:0 0 0 3px hsl(var(--ring)/.12)}
+  .urlbox .ic{width:13px;height:13px}
+  .urlbox input{border:0;background:transparent;color:hsl(var(--foreground));font:inherit;font-size:.8rem;outline:none;width:190px;min-width:0}
+  .content{flex:1;overflow-y:auto;-webkit-overflow-scrolling:touch;padding:20px;min-height:0}
+  .content-inner{max-width:880px;margin:0 auto}
+  .view{display:none}
+  .view.active{display:block;animation:fadeup .2s ease}
+  @keyframes fadeup{from{opacity:0;transform:translateY(5px)}to{opacity:1;transform:none}}
+
+  /* ---------- Cards ---------- */
+  .card{background:hsl(var(--card));border:1px solid hsl(var(--border));border-radius:calc(var(--radius) + 8px);
+    padding:16px 18px;margin-bottom:14px;box-shadow:var(--shadow-sm)}
+  .card h2{display:flex;align-items:center;gap:8px;margin:0 0 12px;font-size:.78rem;font-weight:650;
+    color:hsl(var(--muted-foreground));text-transform:uppercase;letter-spacing:.06em}
+  .card h2 .ic{width:14px;height:14px}
+  .card-head{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:10px}
+  .card-head h2{margin:0}
+  .empty{color:hsl(var(--muted-foreground));font-size:.8rem;padding:6px 0}
+  pre{background:hsl(var(--muted));border:1px solid hsl(var(--border));border-radius:var(--radius);padding:10px;margin:0;
+    font-size:.75rem;white-space:pre-wrap;word-break:break-word;font-family:ui-monospace,"JetBrains Mono",Menlo,monospace}
+
+  /* ---------- Status ---------- */
+  .refbar{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+  .refbar .spacer{flex:1}
+  .refbar input[type=number]{width:58px;padding:5px 7px;border:1px solid hsl(var(--input));border-radius:var(--radius);
+    background:hsl(var(--background));font:inherit;font-size:.8rem;outline:none;color:hsl(var(--foreground))}
+  .refbar input[type=number]:focus{border-color:hsl(var(--ring));box-shadow:0 0 0 3px hsl(var(--ring)/.12)}
+  .sw{display:inline-flex;align-items:center;gap:6px;font-size:.8rem;color:hsl(var(--muted-foreground));cursor:pointer;user-select:none}
+  .sw input{accent-color:hsl(var(--primary));width:14px;height:14px}
+  .stats{display:flex;flex-wrap:wrap;gap:8px;margin:2px 0 16px}
+  .stat{display:flex;align-items:center;gap:8px;border:1px solid hsl(var(--border));border-radius:9999px;
+    background:hsl(var(--secondary));padding:6px 13px;transition:border-color .15s,transform .15s;box-shadow:var(--shadow-sm)}
+  .stat:hover{border-color:hsl(var(--muted-foreground)/.5);transform:translateY(-1px)}
+  .stat .k{font-size:.7rem;color:hsl(var(--muted-foreground));letter-spacing:.02em}
+  .stat .v{font-size:.8rem;font-weight:600;font-variant-numeric:tabular-nums}
+  .usage{margin:12px 0}
+  .usage .uhead{display:flex;align-items:baseline;gap:10px;margin-bottom:5px}
+  .usage .uname{font-size:.8rem;font-weight:600}
+  .usage .unum{font-size:.73rem;color:hsl(var(--muted-foreground));font-variant-numeric:tabular-nums}
+  .usage .upct{margin-left:auto;font-size:.73rem;font-weight:600;font-variant-numeric:tabular-nums;color:hsl(var(--muted-foreground))}
+  .track{height:8px;border-radius:9999px;background:hsl(var(--muted));border:1px solid hsl(var(--border));overflow:hidden}
+  .fill{height:100%;border-radius:9999px;background:hsl(var(--hi));min-width:2px;
+    transition:width .5s cubic-bezier(.22,1,.36,1),background-color .3s}
+  .fill.warn{background:hsl(38 92% 50%)}
+  .fill.crit{background:hsl(var(--destructive))}
+  .usage:hover .fill{filter:brightness(1.12)}
+  .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(86px,1fr));gap:8px;margin-top:4px}
+  .pin{border:1px solid hsl(var(--border));border-radius:calc(var(--radius) + 2px);padding:8px 4px;text-align:center;
+    background:hsl(var(--secondary));display:flex;flex-direction:column;align-items:center;gap:4px;
+    font-variant-numeric:tabular-nums;transition:border-color .15s,box-shadow .15s}
+  .pin .led{width:8px;height:8px;border-radius:9999px;background:hsl(var(--muted-foreground)/.35);transition:all .2s}
+  .pin .pname{font-size:.66rem;color:hsl(var(--muted-foreground))}
+  .pin.hi{background:hsl(var(--hi)/.14);border-color:hsl(var(--hi)/.6);box-shadow:0 0 10px hsl(var(--hi)/.18)}
+  .pin.hi .led{background:hsl(var(--hi));box-shadow:0 0 7px hsl(var(--hi)/.85)}
+  .pin.hi .pname{color:hsl(var(--hi))}
+
+  /* ---------- Chat ---------- */
+  .chat-shell{background:hsl(var(--card));border:1px solid hsl(var(--border));border-radius:calc(var(--radius) + 8px);
+    box-shadow:var(--shadow-sm);display:flex;flex-direction:column;height:calc(100vh - 160px);height:calc(100dvh - 160px)}
+  /* The calc() above guesses the topbar height; where :has() is available the
+     shell instead fills the content area exactly, whatever the topbar wraps to. */
+  .content:has(#v-chat.active){overflow:hidden}
+  .content:has(#v-chat.active) .content-inner{height:100%;display:flex;flex-direction:column}
+  #v-chat.active{display:flex;flex-direction:column;flex:1;min-height:0}
+  .content:has(#v-chat.active) .chat-shell{height:auto;flex:1;min-height:0}
+  .chat{display:flex;flex-direction:column;gap:18px;padding:20px 18px 10px;flex:1;min-height:0;overflow-y:auto;
+    scroll-behavior:smooth}
+  .chat-empty{margin:auto;padding:48px 24px;text-align:center;max-width:420px}
+  .hero-badge{width:52px;height:52px;border-radius:16px;margin:0 auto 16px;background:hsl(var(--muted));
+    border:1px solid hsl(var(--border));display:flex;align-items:center;justify-content:center;color:hsl(var(--foreground))}
+  .hero-badge .ic{width:26px;height:26px;stroke-width:1.6}
+  .chat-empty h2{margin:0 0 6px;font-size:1.35rem;font-weight:650;letter-spacing:-.02em}
+  .chat-empty p{margin:0 0 18px;font-size:.82rem;color:hsl(var(--muted-foreground))}
+  .chips{display:flex;flex-wrap:wrap;gap:8px;justify-content:center}
+  .chip{border:1px solid hsl(var(--border));background:hsl(var(--secondary));color:hsl(var(--foreground));cursor:pointer;
+    border-radius:9999px;padding:6px 13px;font:inherit;font-size:.78rem;transition:border-color .12s,background .12s,transform .12s}
+  .chip:hover{border-color:hsl(var(--muted-foreground)/.55);transform:translateY(-1px)}
+  .chip:active{transform:scale(.96)}
+  .brow{display:flex;gap:10px;max-width:86%;animation:fadeup .18s ease}
+  .brow.u{align-self:flex-end;flex-direction:row-reverse}
+  .brow.a{align-self:flex-start}
+  .avatar{width:26px;height:26px;border-radius:9999px;flex-shrink:0;display:flex;align-items:center;justify-content:center;
+    margin-top:16px;border:1px solid hsl(var(--border))}
+  .avatar .ic{width:13px;height:13px}
+  .brow.u .avatar{background:hsl(var(--primary));color:hsl(var(--primary-foreground));border-color:transparent}
+  .brow.a .avatar{background:hsl(var(--muted));color:hsl(var(--foreground))}
+  .bcol{display:flex;flex-direction:column;min-width:0}
+  .brow.u .bcol{align-items:flex-end}
+  .brow.a .bcol{align-items:flex-start}
+  .brow .who{font-size:.66rem;color:hsl(var(--muted-foreground));margin:2px 4px 4px;font-weight:600;letter-spacing:.02em}
+  .bubble{padding:9px 13px;border-radius:14px;line-height:1.55;word-break:break-word;font-size:.875rem;box-shadow:var(--shadow-sm)}
+  .brow.u .bubble{background:hsl(var(--primary));color:hsl(var(--primary-foreground));border-bottom-right-radius:4px}
+  .brow.a .bubble{background:hsl(var(--secondary));color:hsl(var(--secondary-foreground));border:1px solid hsl(var(--border));border-bottom-left-radius:4px}
+  .bubble.e{background:hsl(var(--destructive)/.1)!important;color:hsl(var(--destructive))!important;border:1px solid hsl(var(--destructive)/.3)!important}
+  .bubble.muted{background:transparent!important;border:0!important;box-shadow:none;color:hsl(var(--muted-foreground));font-size:.75rem;font-style:italic;padding:2px 4px}
+  .composer-wrap{position:relative;padding:10px 14px 14px;margin-top:auto}
+  .composer{border:1px solid hsl(var(--input));border-radius:16px;background:hsl(var(--background));
+    transition:border-color .15s,box-shadow .15s;overflow:hidden}
+  .composer:focus-within{border-color:hsl(var(--ring));box-shadow:0 0 0 3px hsl(var(--ring)/.12)}
+  .composer textarea{display:block;width:100%;resize:none;height:44px;max-height:140px;background:transparent;border:0;
+    padding:11px 14px 4px;font:inherit;font-size:.875rem;outline:none;color:hsl(var(--foreground))}
+  .composer textarea::placeholder{color:hsl(var(--muted-foreground)/.8)}
+  .composer-bar{display:flex;align-items:center;gap:8px;padding:5px 8px 8px}
+  .composer-hint{display:inline-flex;align-items:center;gap:6px;font-size:.68rem;color:hsl(var(--muted-foreground));
+    padding-left:6px;user-select:none}
+  .composer-hint .ic{width:11px;height:11px}
+  .clearbtn{margin-left:auto;width:32px;height:32px;border:0;border-radius:9999px;background:transparent;
+    color:hsl(var(--muted-foreground));cursor:pointer;display:flex;align-items:center;justify-content:center;
+    transition:background .12s,color .12s,transform .12s;flex-shrink:0}
+  .clearbtn:hover{background:hsl(var(--accent));color:hsl(var(--destructive))}
+  .clearbtn:active:not(:disabled){transform:scale(.92)}
+  .clearbtn:disabled{opacity:.4;cursor:default}
+  .clearbtn .ic{width:15px;height:15px}
+  .sendbtn{width:32px;height:32px;border:0;border-radius:9999px;background:hsl(var(--primary));
+    color:hsl(var(--primary-foreground));cursor:pointer;display:flex;align-items:center;justify-content:center;
+    transition:opacity .12s,transform .12s;flex-shrink:0}
+  .sendbtn:hover{transform:scale(1.06)}
+  .sendbtn:disabled{opacity:.4;cursor:default;transform:none}
+  .sendbtn .ic{width:15px;height:15px;stroke-width:2.4}
+  .cmdlist{position:absolute;bottom:calc(100% + 2px);left:14px;right:14px;z-index:30;max-height:250px;overflow-y:auto;
+    background:hsl(var(--popover));border:1px solid hsl(var(--border));border-radius:calc(var(--radius) + 4px);padding:4px;
+    box-shadow:var(--shadow-pop);display:none}
+  .cmdlist.open{display:block;animation:mdrop .16s ease}
+  @keyframes mdrop{from{opacity:0;transform:translateY(-5px)}to{opacity:1;transform:none}}
+  .cmdhint{padding:5px 10px 3px;font-size:.64rem;font-weight:650;color:hsl(var(--muted-foreground));
+    text-transform:uppercase;letter-spacing:.06em}
+  .cmditem{display:flex;align-items:baseline;gap:10px;padding:7px 10px;border-radius:calc(var(--radius));cursor:pointer;transition:background .1s}
+  .cmditem:hover,.cmditem.sel{background:hsl(var(--accent));color:hsl(var(--accent-foreground))}
+  .cmditem .cmdname{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:.8rem;font-weight:600;flex-shrink:0}
+  .cmditem .cmddesc{font-size:.74rem;color:hsl(var(--muted-foreground));min-width:0}
+  .cmditem:hover .cmddesc,.cmditem.sel .cmddesc{color:hsl(var(--accent-foreground)/.72)}
+  .cmditem .go{margin-left:auto;font-size:.68rem;color:hsl(var(--muted-foreground));opacity:0;flex-shrink:0;transition:opacity .1s}
+  .cmditem.sel .go{opacity:1}
+  .typing{display:inline-flex;gap:4px;align-items:center;padding:4px 0}
+  .typing i{width:6px;height:6px;border-radius:9999px;background:hsl(var(--muted-foreground));animation:blink 1.4s infinite both}
+  .typing i:nth-child(2){animation-delay:.2s}.typing i:nth-child(3){animation-delay:.4s}
+  @keyframes blink{0%,80%,100%{opacity:.25}40%{opacity:1}}
+
+  /* Rendered markdown inside agent bubbles */
+  .bubble.a.md > :first-child{margin-top:0}
+  .bubble.a.md > :last-child{margin-bottom:0}
+  .bubble.a.md p{margin:.45em 0}
+  .bubble.a.md h1,.bubble.a.md h2,.bubble.a.md h3,.bubble.a.md h4{margin:.7em 0 .35em;line-height:1.3;text-transform:none;letter-spacing:0;color:inherit;display:block;font-weight:650}
+  .bubble.a.md h1{font-size:1.12rem}.bubble.a.md h2{font-size:1.02rem}.bubble.a.md h3{font-size:.94rem}
+  .bubble.a.md ul,.bubble.a.md ol{margin:.45em 0;padding-left:1.4em}
+  .bubble.a.md li{margin:.2em 0}
+  .bubble.a.md code{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:.82em;
+    background:hsl(var(--muted));border:1px solid hsl(var(--border));border-radius:4px;padding:1px 5px}
+  .bubble.a.md pre{position:relative;background:hsl(var(--muted));border:1px solid hsl(var(--border));border-radius:calc(var(--radius) + 2px);
+    padding:10px 12px;overflow-x:auto;margin:.55em 0;white-space:pre}
+  .bubble.a.md pre code{background:none;border:0;padding:0;font-size:.78rem;line-height:1.55}
+  .bubble.a.md blockquote{margin:.5em 0;padding:2px 12px;border-left:3px solid hsl(var(--muted-foreground)/.5);color:hsl(var(--muted-foreground))}
+  .bubble.a.md table{border-collapse:collapse;margin:.55em 0;font-size:.8rem}
+  .bubble.a.md th,.bubble.a.md td{border:1px solid hsl(var(--border));padding:4px 9px}
+  .bubble.a.md th{background:hsl(var(--muted));font-weight:600}
+  .bubble.a.md a{color:hsl(var(--hi));text-decoration:underline}
+  .bubble.a.md hr{border:0;border-top:1px solid hsl(var(--border));margin:.7em 0}
+  .bubble.a.md img{max-width:100%;border-radius:var(--radius)}
+  .copybtn{position:absolute;top:6px;right:6px;border:1px solid hsl(var(--border));border-radius:5px;
+    background:hsl(var(--background));color:hsl(var(--muted-foreground));font-size:.64rem;padding:2px 8px;
+    cursor:pointer;opacity:0;transition:opacity .15s}
+  .bubble.a.md pre:hover .copybtn{opacity:1}
+  .copybtn:hover{color:hsl(var(--foreground));border-color:hsl(var(--muted-foreground))}
+
+  /* ---------- Buttons & forms ---------- */
+  button.btn{display:inline-flex;align-items:center;gap:6px;border:0;border-radius:9999px;padding:7px 15px;
+    background:hsl(var(--primary));color:hsl(var(--primary-foreground));cursor:pointer;font:inherit;font-size:.8rem;
+    font-weight:550;transition:opacity .12s,background .12s,transform .12s;white-space:nowrap;box-shadow:var(--shadow-sm)}
+  button.btn:hover{opacity:.88}
+  button.btn:active:not(:disabled){transform:scale(.96)}
+  button.btn:disabled{opacity:.5;cursor:default}
+  button.btn .ic{width:13px;height:13px}
+  button.ghost{background:hsl(var(--secondary));color:hsl(var(--secondary-foreground));box-shadow:none;border:1px solid hsl(var(--border))}
+  button.ghost:hover{background:hsl(var(--accent));opacity:1}
+  button.outline{background:transparent;border:1px solid hsl(var(--border));color:hsl(var(--foreground))}
+  button.outline:hover{background:hsl(var(--accent))}
+  select{background:hsl(var(--background));border:1px solid hsl(var(--input));border-radius:var(--radius);padding:6px 10px;
+    font:inherit;font-size:.82rem;outline:none;color:hsl(var(--foreground))}
+  select:focus{border-color:hsl(var(--ring));box-shadow:0 0 0 3px hsl(var(--ring)/.12)}
+  .row{display:flex;gap:12px;align-items:flex-start;margin:10px 0}
+  .row label{width:130px;flex-shrink:0;white-space:nowrap;padding-top:8px;color:hsl(var(--muted-foreground));
+    font-size:.78rem;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+  .row input,.row textarea{flex:1;background:hsl(var(--background));border:1px solid hsl(var(--input));
+    border-radius:calc(var(--radius) + 2px);padding:7px 11px;font:inherit;font-size:.84rem;outline:none;
+    color:hsl(var(--foreground));transition:border-color .12s,box-shadow .12s}
+  .row input:focus,.row textarea:focus{border-color:hsl(var(--ring));box-shadow:0 0 0 3px hsl(var(--ring)/.12)}
+  .row textarea{font-family:ui-monospace,Menlo,monospace;font-size:.78rem;resize:vertical}
+  .volbox{display:flex;align-items:center;gap:10px;flex:1;padding-top:10px}
+  .volbox input[type=range]{flex:1;padding:0;border:0;background:transparent;accent-color:hsl(var(--primary))}
+  .volbox input[type=range]:focus{box-shadow:none}
+  .volval{min-width:30px;text-align:right;font-variant-numeric:tabular-nums;font-size:.8rem}
+  .stxt{font-size:.75rem;color:hsl(var(--muted-foreground));margin-left:8px}
+  .stxt.err{color:hsl(var(--destructive))}
+  .stxt.ok{color:hsl(var(--hi))}
+  .ch-head{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:12px}
+  .ch-head h2{margin:0}
+  .switch{position:relative;display:inline-block;width:38px;height:22px;flex:0 0 auto}
+  .switch input{position:absolute;opacity:0;width:0;height:0;margin:0;padding:0;border:0}
+  .slider{position:absolute;inset:0;background:hsl(var(--input));border-radius:9999px;cursor:pointer;transition:background .15s}
+  .slider::before{content:"";position:absolute;height:16px;width:16px;left:3px;top:3px;background:hsl(var(--background));
+    border-radius:50%;transition:transform .15s;box-shadow:0 1px 2px rgba(0,0,0,.25)}
+  .switch input:checked+.slider{background:hsl(var(--hi))}
+  .switch input:checked+.slider::before{transform:translateX(16px)}
+  .row label.switch{width:38px;padding-top:0;margin-top:7px;color:inherit}
+  .ch-badge{margin-top:7px;font-size:.72rem;font-weight:600;color:hsl(var(--hi));background:hsl(var(--hi)/.1);
+    border:1px solid hsl(var(--hi)/.3);border-radius:9999px;padding:2px 10px}
+  .btn.sm{padding:4px 12px;font-size:.78rem}
+  .modal-mask{position:fixed;inset:0;background:rgba(0,0,0,.45);display:flex;align-items:center;justify-content:center;z-index:60;
+    animation:mfade .15s ease}
+  @keyframes mfade{from{opacity:0}}
+  .modal{background:hsl(var(--card));color:hsl(var(--card-foreground));border:1px solid hsl(var(--border));
+    border-radius:14px;padding:18px 20px;width:min(360px,92vw);box-shadow:var(--shadow-pop);
+    animation:mpop .18s cubic-bezier(.22,1,.36,1)}
+  @keyframes mpop{from{opacity:0;transform:scale(.96) translateY(8px)}}
+  .modal-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:12px}
+  .modal-head h3{margin:0;font-size:1rem}
+  .modal.wide{width:min(460px,92vw)}
+
+  /* config backup & restore */
+  .bk-hint{margin:0 0 12px;font-size:.76rem;line-height:1.55;color:hsl(var(--muted-foreground))}
+  .bk-hint b{color:hsl(var(--foreground));font-weight:600}
+  /* Chinese body copy needs a little more leading than English at these sizes */
+  html[lang|="zh"] .bk-hint,html[lang|="zh"] .chat-empty p,html[lang|="zh"] .mempty{line-height:1.8}
+  .bk-row{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+  .bk-list{max-height:230px;overflow-y:auto;border:1px solid hsl(var(--border));border-radius:calc(var(--radius) + 2px);
+    background:hsl(var(--background));padding:4px 0}
+  .bk-item{display:flex;gap:10px;padding:3px 10px;font-size:.75rem;line-height:1.5;
+    font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+  .bk-item .k{flex-shrink:0;width:140px;color:hsl(var(--muted-foreground))}
+  .bk-item .v{min-width:0;word-break:break-all}
+  .bk-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:14px}
+  .skills > div{border:1px solid hsl(var(--border));border-radius:calc(var(--radius) + 4px);padding:10px 14px;margin:8px 0;
+    background:hsl(var(--background));display:flex;align-items:center;gap:10px;transition:border-color .12s;box-shadow:var(--shadow-sm)}
+  .skills > div:hover{border-color:hsl(var(--muted-foreground)/.45)}
+  .skills .sk-ic{width:30px;height:30px;border-radius:9px;background:hsl(var(--muted));display:flex;align-items:center;
+    justify-content:center;color:hsl(var(--foreground));flex-shrink:0}
+  .skills .sk-ic .ic{width:15px;height:15px}
+  .skills b{font-size:.84rem}
+  .skills .d{color:hsl(var(--muted-foreground));font-size:.78rem;display:-webkit-box;-webkit-line-clamp:2;
+    -webkit-box-orient:vertical;overflow:hidden;overflow-wrap:anywhere}
+  .tag{display:inline-block;font-size:.62rem;font-weight:650;color:hsl(var(--muted-foreground));
+    background:hsl(var(--muted));border:1px solid hsl(var(--border));border-radius:9999px;padding:1px 8px;margin-left:7px;vertical-align:middle}
+
+  /* model combobox */
+  .modelbox{position:relative;display:flex;gap:6px;flex:1;min-width:0}
+  .modelbox>input{flex:1;min-width:0}
+  .modelbox .btn{white-space:nowrap;flex-shrink:0}
+  .btn .spin{display:none;width:11px;height:11px;border:2px solid hsl(var(--muted-foreground)/.35);border-top-color:currentColor;
+    border-radius:50%;animation:rot .7s linear infinite;vertical-align:-1px}
+  .btn.loading .spin{display:inline-block}
+  @keyframes rot{to{transform:rotate(360deg)}}
+  .mlist{position:absolute;top:calc(100% + 5px);left:0;right:110px;max-height:230px;overflow-y:auto;z-index:30;
+    background:hsl(var(--popover));border:1px solid hsl(var(--border));border-radius:calc(var(--radius) + 4px);padding:4px;
+    box-shadow:var(--shadow-pop);display:none}
+  .mlist.open{display:block;animation:mdrop .16s ease}
+  .mitem{padding:6px 10px;border-radius:var(--radius);cursor:pointer;font-size:.78rem;line-height:1.4;
+    font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;word-break:break-all;transition:background .1s}
+  .mitem:hover,.mitem.sel{background:hsl(var(--accent));color:hsl(var(--accent-foreground))}
+  .mempty{padding:8px 10px;font-size:.76rem;color:hsl(var(--muted-foreground))}
+
+  @media(max-width:720px){
+    .app{flex-direction:column}
+    .sidebar{width:100%;flex-direction:row;align-items:center;border-right:0;border-bottom:1px solid hsl(var(--sidebar-border));padding:8px}
+    .brand{padding:0 10px 0 4px} .brand em{display:none} .nav{flex-direction:row;flex:1;overflow-x:auto}
+    .nav button{white-space:nowrap} .nav button.active::before{display:none}
+    .nav .lab{display:none} .sidebar-foot{border:0;margin:0;padding:0 4px}
+    .topbar{padding:10px 12px;gap:8px}
+    .tb-title{min-width:0}
+    .tb-sub{display:none}
+    .urlbox input{width:130px}
+    .content{padding:12px}
+    .brow{max-width:96%}
+    .chat-shell{height:calc(100vh - 190px);height:calc(100dvh - 190px)}
+  }
+</style>
+</head>
+<body>
+<!-- Inline icon set (lucide-style) -->
+<svg xmlns="http://www.w3.org/2000/svg" style="display:none">
+  <symbol id="i-cpu" viewBox="0 0 24 24"><rect x="4" y="4" width="16" height="16" rx="2"/><rect x="9" y="9" width="6" height="6"/><path d="M9 1v3M15 1v3M9 20v3M15 20v3M20 9h3M20 14h3M1 9h3M1 14h3"/></symbol>
+  <symbol id="i-chat" viewBox="0 0 24 24"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></symbol>
+  <symbol id="i-settings" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></symbol>
+  <symbol id="i-zap" viewBox="0 0 24 24"><path d="M13 2 3 14h9l-1 8 10-12h-9l1-8z"/></symbol>
+  <symbol id="i-activity" viewBox="0 0 24 24"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></symbol>
+  <symbol id="i-sun" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"/></symbol>
+  <symbol id="i-moon" viewBox="0 0 24 24"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></symbol>
+  <symbol id="i-link" viewBox="0 0 24 24"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></symbol>
+  <symbol id="i-send" viewBox="0 0 24 24"><path d="M12 19V5M5 12l7-7 7 7"/></symbol>
+  <symbol id="i-refresh" viewBox="0 0 24 24"><path d="M23 4v6h-6M1 20v-6h6"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></symbol>
+  <symbol id="i-user" viewBox="0 0 24 24"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></symbol>
+  <symbol id="i-bot" viewBox="0 0 24 24"><path d="M12 8V4H8"/><rect x="4" y="8" width="16" height="12" rx="2"/><path d="M2 14h2M20 14h2M15 13v2M9 13v2"/></symbol>
+  <symbol id="i-volume" viewBox="0 0 24 24"><path d="M11 5 6 9H2v6h4l5 4V5z"/><path d="M15.54 8.46a5 5 0 0 1 0 7.07M19.07 4.93a10 10 0 0 1 0 14.14"/></symbol>
+  <symbol id="i-terminal" viewBox="0 0 24 24"><path d="M4 17l6-6-6-6M12 19h8"/></symbol>
+  <symbol id="i-upload" viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M17 8l-5-5-5 5M12 3v12"/></symbol>
+  <symbol id="i-download" viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"/></symbol>
+  <symbol id="i-trash" viewBox="0 0 24 24"><path d="M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></symbol>
+  <symbol id="i-radar" viewBox="0 0 24 24"><circle cx="12" cy="12" r="2"/><path d="m13.41 10.59 5.66-5.66"/><path d="M19.07 4.93A10 10 0 0 0 6.99 3.34"/><path d="M4 6h.01"/><path d="M2.29 9.62a10 10 0 1 0 19.02-1.27"/><path d="M16.24 7.76a6 6 0 1 0-8.01 8.91"/><path d="M12 18h.01"/><path d="M17.99 11.66a6 6 0 0 1-2.22 5.01"/></symbol>
+</svg>
+
+<div class="app">
+  <aside class="sidebar">
+    <div class="brand"><span class="logo"><svg class="ic"><use href="#i-cpu"/></svg></span><span>Edge&nbsp;<em>Agent</em></span></div>
+    <nav class="nav" id="nav">
+      <button data-v="chat" class="active" onclick="switchView('chat')"><svg class="ic"><use href="#i-chat"/></svg><span class="lab" data-i18n="navChat">Chat</span></button>
+      <button data-v="skills" onclick="switchView('skills')"><svg class="ic"><use href="#i-zap"/></svg><span class="lab" data-i18n="navSkills">Skills</span></button>
+      <button data-v="config" onclick="switchView('config')"><svg class="ic"><use href="#i-settings"/></svg><span class="lab" data-i18n="navConfig">Config</span></button>
+      <button data-v="status" onclick="switchView('status')"><svg class="ic"><use href="#i-activity"/></svg><span class="lab" data-i18n="navStatus">Status</span></button>
+    </nav>
+    <div class="sidebar-foot">
+      <span class="pill"><span class="dot" id="dot"></span><span id="conn" data-i18n="connDisconnected">Disconnected</span></span>
+      <span class="footbtns">
+        <button class="langbtn" id="langBtn" type="button" onclick="toggleLang()" data-i18n="langBtn" data-i18n-attr="title:langBtnTitle">中文</button>
+        <button class="iconbtn" id="themeBtn" onclick="toggleTheme()" title="Toggle theme" data-i18n-attr="title:themeTitle">
+          <svg class="ic moon"><use href="#i-moon"/></svg><svg class="ic sun"><use href="#i-sun"/></svg>
+        </button>
+      </span>
+    </div>
+  </aside>
+
+  <main class="main">
+    <div class="topbar">
+      <div class="tb-title"><h1 id="viewTitle" data-i18n="navChat">Chat</h1><p class="tb-sub" id="viewSub" data-i18n="subChat">Talk to your Edge Agent</p></div>
+      <label class="urlbox" id="urlBox"><svg class="ic"><use href="#i-link"/></svg><input id="base" type="text" placeholder="192.168.2.216 or 192.168.2." title="Full IP, IP:port, or a subnet prefix like 192.168.2. (Scan then stays inside that subnet)" data-i18n-attr="placeholder:basePlaceholder;title:baseTitle"></label>
+      <button class="btn" id="scanBtn" onclick="scanDevice()" title="Scan for the device; if the address field holds a subnet, only that subnet is scanned" data-i18n-attr="title:scanTitle"><svg class="ic"><use href="#i-radar"/></svg><span id="scanLab" data-i18n="scan">Scan</span></button>
+      <button class="btn" onclick="refreshAll()"><svg class="ic"><use href="#i-refresh"/></svg><span data-i18n="connectBtn">Connect</span></button>
+    </div>
+    <div class="scanbanner" id="scanBanner" hidden>
+      <svg class="ic"><use href="#i-radar"/></svg><span id="scanBannerMsg"></span>
+      <button class="sb-x" onclick="hideScanBanner()" title="Dismiss" data-i18n-attr="title:dismiss">&times;</button>
+    </div>
+    <div class="content"><div class="content-inner">
+
+      <!-- Chat -->
+      <section class="view active" id="v-chat">
+        <div class="chat-shell">
+          <div class="chat" id="chat">
+            <div class="chat-empty" id="chatEmpty">
+              <div class="hero-badge"><svg class="ic"><use href="#i-bot"/></svg></div>
+              <h2 data-i18n="chatHeroTitle">How can I help?</h2>
+              <p data-i18n="chatHeroBody">Chat with the agent to control GPIO and connected devices. Try one of these:</p>
+              <div class="chips">
+                <button class="chip" onclick="fillMsg('/status')">/status</button>
+                <button class="chip" onclick="fillMsg('/help')">/help</button>
+                <button class="chip" onclick="fillMsg(t('chipAsk'))" data-i18n="chipAsk">What can you do?</button>
+              </div>
+            </div>
+          </div>
+          <div class="composer-wrap">
+            <div class="cmdlist" id="cmdlist"></div>
+            <div class="composer">
+              <textarea id="msg" rows="1" placeholder="Message the agent…" data-i18n-attr="placeholder:msgPlaceholder"
+                onkeydown="sendKey(event)" oninput="autoGrow(this);updateCmds()" onblur="setTimeout(closeCmds,150)"></textarea>
+              <div class="composer-bar">
+                <span class="composer-hint"><svg class="ic"><use href="#i-terminal"/></svg><span data-i18n="composerHint">/ for commands · Enter to send · Shift+Enter for newline</span></span>
+                <button class="clearbtn" onclick="clearChat()" title="Clear conversation and start a new session" data-i18n-attr="title:clearTitle"><svg class="ic"><use href="#i-trash"/></svg></button>
+                <button class="sendbtn" onclick="sendMsg()" title="Send" data-i18n-attr="title:sendTitle"><svg class="ic"><use href="#i-send"/></svg></button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Status -->
+      <section class="view" id="v-status">
+        <div class="card">
+          <div class="card-head">
+            <h2><svg class="ic"><use href="#i-cpu"/></svg><span data-i18n="cardDeviceInfo">Device Info</span></h2>
+            <div class="refbar">
+              <button class="btn ghost" onclick="refreshInfo()"><svg class="ic"><use href="#i-refresh"/></svg><span data-i18n="refresh">Refresh</span></button>
+              <span class="stxt" id="updatedAt"></span>
+              <label class="sw"><input type="checkbox" id="autoOn" onchange="onAutoChange()"> <span data-i18n="auto">Auto</span></label>
+              <input type="number" id="interval" min="1" max="3600" value="5" onchange="onAutoChange()"> <span data-i18n="secUnit">sec</span>
+            </div>
+          </div>
+          <div id="info"><div class="empty" data-i18n="infoEmpty">(Disconnected)</div></div>
+        </div>
+        <div class="card"><h2><svg class="ic"><use href="#i-zap"/></svg><span data-i18n="cardGpio">GPIO Levels</span></h2><div class="grid" id="gpio"></div></div>
+        <div class="card">
+          <h2><svg class="ic"><use href="#i-upload"/></svg><span data-i18n="cardOta">Firmware Update</span></h2>
+          <p class="bk-hint" data-i18n-html="otaHint">Upload the <b>.tar</b> that <b>make ota</b> built — 2 MB at most. The device keeps the app
+            it is replacing, reboots into the new one, and boots the kept one back if the new app does not start, so an
+            update cannot leave it unreachable. Settings, chat history and uploaded skills are left alone.</p>
+          <div class="stats" id="otaInfo"><div class="empty" data-i18n="otaUnknown">(Unknown)</div></div>
+          <div class="bk-row">
+            <button class="btn" onclick="pickOta()"><svg class="ic"><use href="#i-upload"/></svg><span data-i18n="otaUpload">Upload bundle</span></button>
+            <input id="ota_file" type="file" accept=".tar,application/x-tar" style="display:none" onchange="onOtaPicked(this)">
+            <button class="btn ghost" onclick="otaRollback()"><svg class="ic"><use href="#i-refresh"/></svg><span data-i18n="otaRollback">Roll back</span></button>
+            <span class="stxt" id="ota_st" style="margin-left:0"></span>
+          </div>
+        </div>
+      </section>
+
+      <!-- Skills -->
+      <section class="view" id="v-skills">
+        <div class="card">
+          <h2><svg class="ic"><use href="#i-zap"/></svg><span data-i18n="cardInstalledSkills">Installed Skills</span></h2>
+          <div id="skills" class="skills"></div>
+        </div>
+        <div class="card">
+          <h2><svg class="ic"><use href="#i-upload"/></svg><span data-i18n="cardUploadSkill">Upload Skill</span></h2>
+          <div class="row"><label>name</label><input id="sk_name" type="text"></div>
+          <div class="row"><label>description</label><input id="sk_desc" type="text"></div>
+          <div class="row"><label>parameters</label><textarea id="sk_params" rows="3">{"type":"object","properties":{},"required":[]}</textarea></div>
+          <div class="row"><label>code</label><textarea id="sk_code" rows="5">def run(args):
+    return "ok"</textarea></div>
+          <button class="btn" onclick="uploadSkill()" data-i18n="uploadBtn">Upload</button><span class="stxt" id="sk_st"></span>
+        </div>
+      </section>
+
+      <!-- Config -->
+      <section class="view" id="v-config">
+        <div class="card">
+          <div class="ch-head"><h2><svg class="ic"><use href="#i-link"/></svg><span data-i18n="cardChannels">Channels</span></h2><span class="stxt" id="ch_st"></span></div>
+          <div id="ch_list"></div>
+        </div>
+        <div class="card">
+          <h2><svg class="ic"><use href="#i-bot"/></svg>LLM</h2>
+          <div class="row"><label>base_url</label><input id="cfg_base" type="text"></div>
+          <div class="row"><label>api_key</label><input id="cfg_key" type="password" placeholder="Leave blank to keep unchanged" data-i18n-attr="placeholder:phKeepUnchanged"></div>
+          <div class="row"><label>model</label>
+            <div class="modelbox">
+              <input id="cfg_model" type="text" placeholder="Select or enter model name" autocomplete="off" spellcheck="false" data-i18n-attr="placeholder:phModel"
+                onfocus="openModels()" oninput="onModelInput(this.value)" onkeydown="modelKey(event)" onblur="setTimeout(closeModels,150)">
+              <button class="btn ghost" id="fetchBtn" type="button" onclick="fetchModels(false)"><span class="spin" id="fetchSpin"></span><span id="fetchTxt" data-i18n="fetchModels">Fetch Models</span></button>
+              <div class="mlist" id="mlist"></div>
+            </div>
+          </div>
+          <div class="row" id="model_status_row" style="display:none"><label></label><span class="stxt" id="model_st"></span></div>
+          <div class="row"><label>reasoning_effort</label><input id="cfg_reffort" type="text" placeholder="e.g. low / medium / high; leave blank to omit" data-i18n-attr="placeholder:phReffort"></div>
+        </div>
+        <div class="card">
+          <h2><svg class="ic"><use href="#i-volume"/></svg><span data-i18n="cardVoice">Voice</span></h2>
+          <div class="row"><label data-i18n="cfgEnabled">Enabled</label><label class="switch"><input id="cfg_venabled" type="checkbox" checked onchange="toggleVoiceFields()"><span class="slider"></span></label></div>
+          <div id="voice_fields">
+            <div class="row"><label>volume</label>
+              <div class="volbox">
+                <input id="cfg_vol" type="range" min="0" max="100" step="5" value="100"
+                  oninput="$('cfg_vol_val').textContent=this.value" onchange="saveVolume()">
+                <span class="stxt volval" id="cfg_vol_val">100</span>
+                <button class="btn ghost" type="button" onclick="testVolume()" data-i18n="testBtn">Test</button>
+              </div>
+            </div>
+            <div class="row"><label>asr_ws_host</label><input id="cfg_asr_host" type="text" placeholder="Full URL, e.g. wss://dashscope.aliyuncs.com/api-ws/v1/inference" data-i18n-attr="placeholder:phFullUrl"></div>
+            <div class="row"><label>asr_ws_api_key</label><input id="cfg_asr_key" type="password"></div>
+            <div class="row"><label>asr_ws_model</label><input id="cfg_asr_model" type="text" placeholder="Default paraformer-realtime-v2" data-i18n-attr="placeholder:phAsrModel"></div>
+            <div class="row"><label>tts_ws_host</label><input id="cfg_tts_host" type="text" placeholder="Host or full URL, e.g. wss://dashscope.aliyuncs.com/api-ws/v1/inference" data-i18n-attr="placeholder:phHostOrUrl"></div>
+            <div class="row"><label>tts_ws_api_key</label><input id="cfg_tts_key" type="password"></div>
+            <div class="row"><label>tts_ws_model</label><input id="cfg_tts_model" type="text" placeholder="Default sambert-zhiying-v1 (model name selects the voice)" data-i18n-attr="placeholder:phTtsModel"></div>
+            <div class="row"><label>tts_ws_sample_rate</label><input id="cfg_tts_rate" type="number" min="8000" max="48000" placeholder="Default 16000" data-i18n-attr="placeholder:phDefault16000"></div>
+          </div>
+        </div>
+        <div class="card">
+          <h2><svg class="ic"><use href="#i-settings"/></svg><span data-i18n="cardBasic">Basic</span></h2>
+          <div class="row"><label>max_tool_rounds</label><input id="cfg_mtr" type="number" min="1" max="20" placeholder="Default 3" data-i18n-attr="placeholder:phDefault3"></div>
+          <div class="row"><label>session_timeout_min</label><input id="cfg_sto" type="number" min="0" max="1440" placeholder="New session after N min idle; default 15, 0 disables" data-i18n-attr="placeholder:phSessionTimeout"></div>
+          <div class="row"><label>system_prompt</label><textarea id="cfg_sysprompt" rows="4" placeholder="Leave blank to use default prompt" data-i18n-attr="placeholder:phSysPrompt"></textarea></div>
+        </div>
+        <button class="btn" onclick="saveConfig()" data-i18n="saveConfig">Save Config</button><span class="stxt" id="cfg_st"></span>
+        <div class="card" style="margin-top:16px">
+          <h2><svg class="ic"><use href="#i-download"/></svg><span data-i18n="cardBackup">Backup &amp; Restore</span></h2>
+          <p class="bk-hint" data-i18n-html="bkHint">Export writes every device setting to a JSON file — <b>API keys included, in plain
+            text</b>, so keep the file safe. Import shows what the file carries and writes those settings back;
+            whatever it does not mention is left alone. WiFi credentials are not part of a backup.</p>
+          <div class="bk-row">
+            <button class="btn" onclick="exportConfig()"><svg class="ic"><use href="#i-download"/></svg><span data-i18n="bkExport">Export</span></button>
+            <button class="btn ghost" onclick="pickBackup()"><svg class="ic"><use href="#i-upload"/></svg><span data-i18n="bkImport">Import</span></button>
+            <input id="bk_file" type="file" accept=".json,application/json" style="display:none" onchange="onBackupPicked(this)">
+            <span class="stxt" id="bk_st" style="margin-left:0"></span>
+          </div>
+        </div>
+      </section>
+
+    </div></div>
+  </main>
+</div>
+
+<!-- WeChat QR login modal -->
+<div id="wx_modal" class="modal-mask" style="display:none">
+  <div class="modal">
+    <div class="modal-head">
+      <h3 data-i18n="wxTitle">WeChat Connect</h3>
+      <button class="iconbtn" onclick="weixinCloseModal()" title="Close" data-i18n-attr="title:closeTitle">&#10005;</button>
+    </div>
+    <div style="text-align:center">
+      <img id="wx_qr" width="220" height="220" alt="QR" style="border-radius:10px;background:#fff;display:block;margin:0 auto">
+      <p class="stxt" id="wx_msg" style="margin:10px 0 4px"></p>
+      <div id="wx_verify_wrap" style="display:none;margin:8px 0">
+        <input id="wx_verify" type="text" placeholder="Code shown in WeChat" data-i18n-attr="placeholder:phWxCode"
+          style="width:130px;background:hsl(var(--background));border:1px solid hsl(var(--input));border-radius:8px;padding:6px 10px;color:inherit;font:inherit">
+        <button class="btn sm" onclick="weixinSubmitVerify()" data-i18n="submit">Submit</button>
+      </div>
+      <button class="btn sm" id="wx_retry" style="display:none;margin-top:6px" onclick="weixinConnect(true)" data-i18n="wxRefresh">Refresh QR Code</button>
+      <details style="margin-top:10px"><summary class="stxt" style="cursor:pointer;margin-left:0" data-i18n="wxQrContent">QR content</summary>
+        <div id="wx_qr_content" style="word-break:break-all;font-size:.72rem;color:hsl(var(--muted-foreground));text-align:left;margin-top:6px"></div>
+      </details>
+    </div>
+  </div>
+</div>
+
+<!-- Config restore confirm modal -->
+<div id="bk_modal" class="modal-mask" style="display:none">
+  <div class="modal wide">
+    <div class="modal-head">
+      <h3 data-i18n="bkTitle">Restore Config</h3>
+      <button class="iconbtn" onclick="closeBackupModal()" title="Close" data-i18n-attr="title:closeTitle">&#10005;</button>
+    </div>
+    <p class="stxt" id="bk_src" style="margin:0 0 8px"></p>
+    <div id="bk_list" class="bk-list"></div>
+    <p class="stxt" style="margin:8px 0 0" data-i18n="bkOverwrite">These values overwrite the matching settings on the device.</p>
+    <div class="bk-actions">
+      <button class="btn ghost" onclick="closeBackupModal()" data-i18n="cancel">Cancel</button>
+      <button class="btn" id="bk_ok" onclick="confirmBackup()" data-i18n="restoreBtn">Restore</button>
+    </div>
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/marked@12/marked.min.js"></script>
+<script>
+if(window.marked){ marked.use({breaks:true, gfm:true}); }
+
+/* ---- Bilingual UI -------------------------------------------------------
+   Every string this page shows is a key into I18N. The markup points at a key
+   with data-i18n (text), data-i18n-html (text with inline markup) or
+   data-i18n-attr="attr:key;…"; the script reads keys through t(). {name}
+   placeholders are filled in after the lookup rather than by concatenation,
+   because the two languages do not share word order.
+   A key that is not in the table is returned as-is, which is what lets text
+   that comes off the wire (a device error, a heap region name) pass through.
+   Text the script has already put on screen is redrawn from the remembered key
+   by applyDynamicI18n(), so switching language does not leave stale copy.
+   Only this page is translated: what the device itself sends back - /help
+   output, agent replies, API errors - stays in whatever language it came in. */
+const I18N = {
+  en: {
+    // sidebar, top bar, language toggle
+    navChat: 'Chat', navConfig: 'Config', navSkills: 'Skills', navStatus: 'Status',
+    subChat: 'Talk to your Edge Agent', subConfig: 'LLM, voice and channel settings',
+    subSkills: 'Extend the agent with custom skills', subStatus: 'Device health and GPIO levels',
+    connDisconnected: 'Disconnected',
+    themeTitle: 'Toggle theme', langBtn: '中文', langBtnTitle: 'Switch to Chinese',
+    basePlaceholder: '192.168.2.216 or 192.168.2.',
+    baseTitle: 'Full IP, IP:port, or a subnet prefix like 192.168.2. (Scan then stays inside that subnet)',
+    scanTitle: 'Scan for the device; if the address field holds a subnet, only that subnet is scanned',
+    scan: 'Scan', scanStop: 'Stop', connectBtn: 'Connect', dismiss: 'Dismiss',
+    // LAN scan
+    connConnecting: 'Connecting…', connConnected: 'Connected', connFailed: 'Connection failed',
+    connSubnetRequired: 'Subnet required',
+    connScanningPct: 'Scanning… {pct}%',
+    connScanningSubnet: 'Scanning {subnet}.x… {pct}%',
+    connRetryingSubnet: 'Retrying {subnet}.x… {pct}%',
+    connScanCancelled: 'Scan cancelled',
+    connNoDeviceSubnet: 'No device in {subnet}.x', connNoDeviceIp: 'No device at {ip}',
+    bannerNeedSubnet: 'Type the device subnet (e.g. 192.168.2.) or a full IP above, then scan.',
+    bannerNotFound: 'No device found in {subnet}.x — check the subnet and scan again.',
+    // chat
+    chatHeroTitle: 'How can I help?',
+    chatHeroBody: 'Chat with the agent to control GPIO and connected devices. Try one of these:',
+    chipAsk: 'What can you do?',
+    msgPlaceholder: 'Message the agent…',
+    composerHint: '/ for commands · Enter to send · Shift+Enter for newline',
+    clearTitle: 'Clear conversation and start a new session', sendTitle: 'Send',
+    whoYou: 'You', whoAgent: 'Agent',
+    copyBtn: 'Copy', copiedBtn: 'Copied',
+    chatRequestFailed: 'Request failed: {err}',
+    cmdHint: 'Commands',
+    cmdNew: 'Clear conversation and start a new session',
+    cmdHistory: 'View the last n conversation records',
+    cmdStatus: 'View device and memory status',
+    cmdHelp: 'Show command help',
+    // status panel
+    cardDeviceInfo: 'Device Info', cardGpio: 'GPIO Levels',
+    refresh: 'Refresh', auto: 'Auto', secUnit: 'sec', infoEmpty: '(Disconnected)',
+    statUptime: 'Uptime', statChip: 'Chip', statFirmware: 'Firmware',
+    statDisk: 'Disk', statHeap: 'Heap',
+    upDh: '{d}d {h}h', upHm: '{h}h {m}m', upMs: '{m}m {s}s',
+    bytesTitle: '{used} / {total} bytes',
+    updatedAt: 'Updated at {time}',
+    // firmware update (OTA)
+    cardOta: 'Firmware Update', otaUnknown: '(Unknown)',
+    otaHint: 'Upload the <b>.tar</b> that <b>make ota</b> built — 2 MB at most. The device keeps the app it is replacing, reboots into the new one, and boots the kept one back if the new app does not start, so an update cannot leave it unreachable. Settings, chat history and uploaded skills are left alone.',
+    otaUpload: 'Upload bundle', otaRollback: 'Roll back',
+    otaRunning: 'Running', otaState: 'State', otaKept: 'Kept', otaNothing: 'nothing',
+    otaStNone: 'factory image', otaStOk: 'running', otaStStarting: 'starting',
+    otaStBad: 'rolled back',
+    otaPickTar: 'Pick the .tar that `make ota` built',
+    otaTooBig: '{size} is over the {limit} limit',
+    otaUploading: 'Uploading {size} …', otaUploadFailed: 'Upload failed: {err}',
+    otaInstalled: 'Installed {ver}, restarting …',
+    otaRollingBack: 'Rolling back …', otaRollbackFailed: 'Rollback failed: {err}',
+    otaGoingBack: 'Going back to {ver}, restarting …',
+    otaWaiting: 'Waiting for the device to come back …', otaStarting: 'Starting …',
+    otaBackOn: 'Back on {ver}', otaUpdatedTo: 'Updated to {ver}',
+    otaNewAppFailed: 'The new app did not start - running {ver} again',
+    otaNoComeBack: 'The device did not come back',
+    // config
+    cardChannels: 'Channels', cardVoice: 'Voice', cardBasic: 'Basic',
+    cfgEnabled: 'Enabled', testBtn: 'Test', saveConfig: 'Save Config',
+    phKeepUnchanged: 'Leave blank to keep unchanged', phModel: 'Select or enter model name',
+    phReffort: 'e.g. low / medium / high; leave blank to omit',
+    phFullUrl: 'Full URL, e.g. wss://dashscope.aliyuncs.com/api-ws/v1/inference',
+    phAsrModel: 'Default paraformer-realtime-v2',
+    phHostOrUrl: 'Host or full URL, e.g. wss://dashscope.aliyuncs.com/api-ws/v1/inference',
+    phTtsModel: 'Default sambert-zhiying-v1 (model name selects the voice)',
+    phDefault16000: 'Default 16000', phDefault3: 'Default 3',
+    phSessionTimeout: 'New session after N min idle; default 15, 0 disables',
+    phSysPrompt: 'Leave blank to use default prompt',
+    // model picker
+    fetchModels: 'Fetch Models', mdlFetching: 'Fetching',
+    mdlNeedBaseUrl: 'Please fill in base_url first', mdlRequesting: 'Requesting {url} …',
+    mdlFetched: 'Fetched {n} models, click the input to select',
+    mdlTimedOut: 'Request timed out',
+    mdlFetchFailed: 'Fetch failed: {reason} (check base_url, or the API may not support browser CORS)',
+    mdlNoMatch: 'No matching models, type directly',
+    mdlNoneYet: 'No model list yet, click Fetch Models or type directly',
+    // channels and WeChat
+    chWeb: 'Web', chVoice: 'Voice', chWeixin: 'WeChat',
+    chAlwaysOn: 'Always On', chConnect: 'Connect', chLogout: 'Logout',
+    chReconnect: 'Reconnect', chLoginExpired: 'Login expired', chNotConnected: 'Not connected',
+    wxTitle: 'WeChat Connect', closeTitle: 'Close', phWxCode: 'Code shown in WeChat',
+    submit: 'Submit', wxRefresh: 'Refresh QR Code', wxQrContent: 'QR content',
+    wxRequesting: 'Requesting QR code…', wxNoQr: 'no QR code returned',
+    wxScanToConnect: 'Scan with WeChat to connect', wxQrFailed: 'Failed to get QR code: {msg}',
+    wxScanned: 'Scanned — confirm on your phone', wxEnterCode: 'Enter the code shown in WeChat',
+    wxExpired: 'QR code expired', wxNetworkError: 'Network error: {msg}', wxVerifying: 'Verifying…',
+    // backup and restore
+    cardBackup: 'Backup & Restore', bkExport: 'Export', bkImport: 'Import',
+    bkHint: 'Export writes every device setting to a JSON file — <b>API keys included, in plain text</b>, so keep the file safe. Import shows what the file carries and writes those settings back; whatever it does not mention is left alone. WiFi credentials are not part of a backup.',
+    bkTitle: 'Restore Config', bkOverwrite: 'These values overwrite the matching settings on the device.',
+    cancel: 'Cancel', restoreBtn: 'Restore', bkRestoring: 'Restoring…',
+    bkExporting: 'Exporting…', bkSaved: 'Saved {name}', bkExportFailed: 'Export failed: {err}',
+    bkNotJson: 'Not valid JSON: {msg}', bkNoSettings: 'No settings found in {name}',
+    bkRestored: 'Restored {n} settings', bkRestoreFailed: 'Restore failed: {err}',
+    bkEmptyValue: '(empty)', bkExportedSuffix: ' · exported {when}',
+    bkFileEmpty: 'This file carries no settings.',
+    // skills
+    cardInstalledSkills: 'Installed Skills', cardUploadSkill: 'Upload Skill', uploadBtn: 'Upload',
+    skNone: 'No skills', skBuiltin: 'Built-in', skDelete: 'Delete',
+    skBadParams: 'parameters is not valid JSON',
+  },
+  zh: {
+    navChat: '对话', navConfig: '配置', navSkills: '技能', navStatus: '状态',
+    subChat: '与你的 Edge Agent 对话', subConfig: 'LLM、语音与通道设置',
+    subSkills: '用自定义技能扩展 Agent', subStatus: '设备健康状况与 GPIO 电平',
+    connDisconnected: '未连接',
+    themeTitle: '切换主题', langBtn: 'EN', langBtnTitle: '切换到英文',
+    basePlaceholder: '192.168.2.216 或 192.168.2.',
+    baseTitle: '可填完整 IP、IP:端口，或形如 192.168.2. 的网段前缀（此时扫描只在该网段内进行）',
+    scanTitle: '扫描设备；地址栏填的是网段时，只扫描该网段',
+    scan: '扫描', scanStop: '停止', connectBtn: '连接', dismiss: '关闭',
+    connConnecting: '连接中…', connConnected: '已连接', connFailed: '连接失败',
+    connSubnetRequired: '需要网段',
+    connScanningPct: '扫描中… {pct}%',
+    connScanningSubnet: '正在扫描 {subnet}.x… {pct}%',
+    connRetryingSubnet: '正在重试 {subnet}.x… {pct}%',
+    connScanCancelled: '扫描已取消',
+    connNoDeviceSubnet: '{subnet}.x 内没有设备', connNoDeviceIp: '{ip} 上没有设备',
+    bannerNeedSubnet: '请先在上方填写设备网段（例如 192.168.2.）或完整 IP，再扫描。',
+    bannerNotFound: '在 {subnet}.x 内没有找到设备 —— 请检查网段后重新扫描。',
+    chatHeroTitle: '有什么可以帮你？',
+    chatHeroBody: '和 Agent 对话即可控制 GPIO 和已连接的设备。可以试试这些：',
+    chipAsk: '你能做什么？',
+    msgPlaceholder: '给 Agent 发消息…',
+    composerHint: '/ 呼出命令 · Enter 发送 · Shift+Enter 换行',
+    clearTitle: '清空对话并开启新会话', sendTitle: '发送',
+    whoYou: '你', whoAgent: 'Agent',
+    copyBtn: '复制', copiedBtn: '已复制',
+    chatRequestFailed: '请求失败：{err}',
+    cmdHint: '命令',
+    cmdNew: '清空对话并开启新会话',
+    cmdHistory: '查看最近 n 条对话记录',
+    cmdStatus: '查看设备与记忆状态',
+    cmdHelp: '显示命令帮助',
+    cardDeviceInfo: '设备信息', cardGpio: 'GPIO 电平',
+    refresh: '刷新', auto: '自动', secUnit: '秒', infoEmpty: '（未连接）',
+    statUptime: '运行时长', statChip: '芯片', statFirmware: '固件',
+    statDisk: '磁盘', statHeap: '堆',
+    upDh: '{d} 天 {h} 小时', upHm: '{h} 小时 {m} 分', upMs: '{m} 分 {s} 秒',
+    bytesTitle: '{used} / {total} 字节',
+    updatedAt: '更新于 {time}',
+    cardOta: '固件更新', otaUnknown: '（未知）',
+    otaHint: '上传 <b>make ota</b> 生成的 <b>.tar</b>，最大 2 MB。设备会保留被替换掉的那个 app，重启进入新的；如果新 app 起不来，就再启回保留的那个，所以一次更新不会让设备失联。设置、聊天记录和已上传的技能都不受影响。',
+    otaUpload: '上传更新包', otaRollback: '回滚',
+    otaRunning: '当前运行', otaState: '状态', otaKept: '已保留', otaNothing: '无',
+    otaStNone: '出厂镜像', otaStOk: '运行中', otaStStarting: '启动中',
+    otaStBad: '已回滚',
+    otaPickTar: '请选择 `make ota` 生成的 .tar 文件',
+    otaTooBig: '{size} 超过了 {limit} 的上限',
+    otaUploading: '正在上传 {size} …', otaUploadFailed: '上传失败：{err}',
+    otaInstalled: '已安装 {ver}，正在重启 …',
+    otaRollingBack: '正在回滚 …', otaRollbackFailed: '回滚失败：{err}',
+    otaGoingBack: '正在退回 {ver}，重启中 …',
+    otaWaiting: '等待设备重新上线 …', otaStarting: '启动中 …',
+    otaBackOn: '已回到 {ver}', otaUpdatedTo: '已更新到 {ver}',
+    otaNewAppFailed: '新 app 没能启动 - 重新运行 {ver}',
+    otaNoComeBack: '设备没有回来',
+    cardChannels: '通道', cardVoice: '语音', cardBasic: '基本',
+    cfgEnabled: '启用', testBtn: '试听', saveConfig: '保存配置',
+    phKeepUnchanged: '留空表示不修改', phModel: '选择或输入模型名称',
+    phReffort: '例如 low / medium / high；留空表示不下发',
+    phFullUrl: '完整 URL，例如 wss://dashscope.aliyuncs.com/api-ws/v1/inference',
+    phAsrModel: '默认 paraformer-realtime-v2',
+    phHostOrUrl: '主机名或完整 URL，例如 wss://dashscope.aliyuncs.com/api-ws/v1/inference',
+    phTtsModel: '默认 sambert-zhiying-v1（模型名即音色）',
+    phDefault16000: '默认 16000', phDefault3: '默认 3',
+    phSessionTimeout: '空闲 N 分钟后开启新会话；默认 15，0 表示不超时',
+    phSysPrompt: '留空则使用默认提示词',
+    fetchModels: '获取模型', mdlFetching: '获取中',
+    mdlNeedBaseUrl: '请先填写 base_url', mdlRequesting: '正在请求 {url} …',
+    mdlFetched: '已获取 {n} 个模型，点击输入框即可选择',
+    mdlTimedOut: '请求超时',
+    mdlFetchFailed: '获取失败：{reason}（请检查 base_url，或该 API 可能不支持浏览器跨域访问）',
+    mdlNoMatch: '没有匹配的模型，可直接输入',
+    mdlNoneYet: '还没有模型列表，点击「获取模型」或直接输入',
+    chWeb: '网页', chVoice: '语音', chWeixin: '微信',
+    chAlwaysOn: '始终开启', chConnect: '连接', chLogout: '退出登录',
+    chReconnect: '重新连接', chLoginExpired: '登录已过期', chNotConnected: '未连接',
+    wxTitle: '微信连接', closeTitle: '关闭', phWxCode: '微信中显示的验证码',
+    submit: '提交', wxRefresh: '刷新二维码', wxQrContent: '二维码内容',
+    wxRequesting: '正在获取二维码…', wxNoQr: '没有返回二维码',
+    wxScanToConnect: '请用微信扫一扫登录', wxQrFailed: '获取二维码失败：{msg}',
+    wxScanned: '已扫码 —— 请在手机上确认', wxEnterCode: '请输入微信中显示的验证码',
+    wxExpired: '二维码已过期', wxNetworkError: '网络错误：{msg}', wxVerifying: '正在验证…',
+    cardBackup: '备份与恢复', bkExport: '导出', bkImport: '导入',
+    bkHint: '导出会把设备上的全部设置写进一个 JSON 文件——<b>API key 以明文形式包含在内</b>，请妥善保管。导入会先列出文件里带了哪些设置，再写回设备；文件里没有提到的设置保持不变。WiFi 凭据不在备份范围内。',
+    bkTitle: '恢复配置', bkOverwrite: '这些值会覆盖设备上对应的设置。',
+    cancel: '取消', restoreBtn: '恢复', bkRestoring: '正在恢复…',
+    bkExporting: '正在导出…', bkSaved: '已保存 {name}', bkExportFailed: '导出失败：{err}',
+    bkNotJson: '不是合法的 JSON：{msg}', bkNoSettings: '{name} 里没有找到设置',
+    bkRestored: '已恢复 {n} 项设置', bkRestoreFailed: '恢复失败：{err}',
+    bkEmptyValue: '（空）', bkExportedSuffix: ' · 导出于 {when}',
+    bkFileEmpty: '这个文件里没有设置。',
+    cardInstalledSkills: '已安装的技能', cardUploadSkill: '上传技能', uploadBtn: '上传',
+    skNone: '暂无技能', skBuiltin: '内置', skDelete: '删除',
+    skBadParams: 'parameters 不是合法的 JSON',
+  },
+};
+
+let LANG = (function(){
+  try{
+    const saved = localStorage.getItem('esp32-ui.lang');
+    if(saved === 'zh' || saved === 'en') return saved;
+  }catch(e){}
+  return /^zh/i.test(navigator.language || '') ? 'zh' : 'en';
+})();
+
+// What each dynamic slot last showed, as a key plus its parameters, so a
+// language switch redraws it instead of leaving the old language behind. The
+// payloads the panels were built from are kept too, for the same reason: the
+// device may be out of reach at the moment the user switches.
+let lastConn = null, lastBanner = null, lastScanLab = 'scan', lastOtaSay = null,
+    lastBk = null, lastModel = null, lastWxMsg = null, lastFetchTxt = 'fetchModels',
+    bkBusy = false, lastUpdatedAt = null;
+let lastInfo = null, lastOtaInfo = null, lastChannels = null, lastSkills = null,
+    lastBackup = null;
+
+function t(key, params){
+  let s = I18N[LANG][key];
+  if(s === undefined) s = I18N.en[key];
+  if(s === undefined) return key;   // text that came off the wire passes through
+  for(const name in (params || {})) s = s.split('{' + name + '}').join(params[name]);
+  return s;
+}
+
+// Read with getAttribute rather than el.dataset: the camelCase mapping of a
+// dashed name that also holds a digit (data-i18n -> i18n) is exactly the kind of
+// thing that differs between DOM implementations, and these are directives read
+// on a language switch, not data.
+function applyStaticI18n(){
+  document.querySelectorAll('[data-i18n]').forEach(el => { el.textContent = t(el.getAttribute('data-i18n')); });
+  // The values are authored in I18N, never taken from input, so markup is safe.
+  document.querySelectorAll('[data-i18n-html]').forEach(el => { el.innerHTML = t(el.getAttribute('data-i18n-html')); });
+  document.querySelectorAll('[data-i18n-attr]').forEach(el => {
+    el.getAttribute('data-i18n-attr').split(';').forEach(pair => {
+      const at = pair.split(':');
+      if(at.length === 2 && at[0].trim()) el.setAttribute(at[0].trim(), t(at[1].trim()));
+    });
+  });
+}
+// Run before anything else paints, so the static markup is already in the
+// chosen language; applyLang() repeats it together with the dynamic pass.
+applyStaticI18n();
+
+function applyDynamicI18n(){
+  $('viewTitle').textContent = TITLES[curView] ? t(TITLES[curView]) : curView;
+  $('viewSub').textContent = SUBS[curView] ? t(SUBS[curView]) : '';
+  renderConn();
+  if(lastBanner && !$('scanBanner').hidden) $('scanBannerMsg').textContent = t(lastBanner.key, lastBanner.params);
+  $('scanLab').textContent = t(lastScanLab);
+  $('fetchTxt').textContent = t(lastFetchTxt);
+  $('bk_ok').textContent = t(bkBusy ? 'bkRestoring' : 'restoreBtn');
+  renderOtaSay(); renderBk(); renderModelStatus(); renderWxMsg();
+  renderInfo(); renderOtaInfo(); renderChannels(); renderSkills();
+  if(lastBackup) renderBackup(lastBackup.cfg, lastBackup.name, lastBackup.env);
+  if(lastUpdatedAt) $('updatedAt').textContent = t('updatedAt', {time: lastUpdatedAt.toLocaleTimeString()});
+  document.querySelectorAll('[data-who-key]').forEach(el => { el.textContent = t(el.getAttribute('data-who-key')); });
+  if(MODELS.length) renderModels($('cfg_model').value);
+  if(cmdsOpen()) updateCmds();
+}
+// Setting the language only redraws; persisting it is a separate step so a first
+// visit keeps following the browser instead of freezing the detection.
+function applyLang(){
+  document.documentElement.lang = LANG === 'zh' ? 'zh-CN' : 'en';
+  applyStaticI18n();
+  applyDynamicI18n();
+}
+function setLang(lang){
+  LANG = lang === 'zh' ? 'zh' : 'en';
+  try{ localStorage.setItem('esp32-ui.lang', LANG); }catch(e){}
+  applyLang();
+}
+function toggleLang(){ setLang(LANG === 'zh' ? 'en' : 'zh'); }
+
+let BASE = localStorage.getItem('base') ||
+  (location.protocol.indexOf('http') === 0 ? location.origin : '');
+BASE = parseBase(BASE).base || BASE;  // accept bare IPs saved by older versions
+document.getElementById('base').value = BASE;
+
+// ---- Theme ----
+function applyThemeIcon(){ /* icon swap handled via CSS on .dark */ }
+function toggleTheme(){ document.documentElement.classList.toggle('dark'); localStorage.setItem('esp32-ui.theme', document.documentElement.classList.contains('dark') ? 'dark' : 'light'); applyThemeIcon(); }
+
+// ---- View switching ----
+// Keys into I18N rather than the labels, so switchView and a language switch
+// agree on what the title bar shows.
+const TITLES = {chat:'navChat', skills:'navSkills', config:'navConfig', status:'navStatus'};
+const SUBS = {chat:'subChat', skills:'subSkills', config:'subConfig', status:'subStatus'};
+let curView = 'chat';
+function switchView(v){
+  curView = v;
+  document.querySelectorAll('.view').forEach(el => el.classList.toggle('active', el.id === 'v-' + v));
+  document.querySelectorAll('#nav button').forEach(b => b.classList.toggle('active', b.dataset.v === v));
+  document.getElementById('viewTitle').textContent = TITLES[v] ? t(TITLES[v]) : v;
+  document.getElementById('viewSub').textContent = SUBS[v] ? t(SUBS[v]) : '';
+  restartAuto();  // auto-refresh only while on the status view
+}
+
+// ---- Helpers ----
+function $(id){return document.getElementById(id);}
+function u(path){return BASE.replace(/\/$/, '') + path;}
+function renderConn(){
+  if(!lastConn) return;
+  $('conn').textContent = t(lastConn.key, lastConn.params);
+  $('dot').className = 'dot ' + (lastConn.cls || '');
+}
+function setConn(key, params, cls){ lastConn = {key, params, cls}; renderConn(); }
+async function getJSON(p){return (await fetch(u(p))).json();}
+async function postJSON(p, o){return (await fetch(u(p),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(o)})).json();}
+async function delJSON(p, o){return (await fetch(u(p),{method:'DELETE',headers:{'Content-Type':'application/json'},body:JSON.stringify(o)})).json();}
+
+async function refreshAll(){
+  let v=$('base').value.trim();
+  const pb=parseBase(v);
+  if(pb.base && pb.base!==v){ v=pb.base; $('base').value=v; }  // e.g. bare IP -> http://IP
+  BASE=v; localStorage.setItem('base', BASE);
+  hideScanBanner();
+  setConn('connConnecting', null, '');
+  try { await loadInfo(); await loadOta(); await loadConfig(); await loadChannels(); await loadSkills(); setConn('connConnected', null, 'ok'); }
+  catch(e){ setConn('connFailed', null, 'bad'); }
+}
+
+// ---- LAN scan: find the device when this page is opened offline (file://) ----
+const SCAN_PORT=80;
+let scanState=null;
+function isPrivateIp(ip){
+  const p=ip.split('.').map(Number);
+  return p[0]===10 || (p[0]===192&&p[1]===168) || (p[0]===172&&p[1]>=16&&p[1]<=31);
+}
+function parseBase(v){
+  // Accepted: http(s)://ip[:port][/path], bare ip[:port], ip/24, "a.b.c." or "a.b.c".
+  // Partial forms return {subnet:'a.b.c'} so the scan stays inside that /24.
+  v=(v||'').trim();
+  const s=v.replace(/^https?:\/\//i,'');
+  let m=/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})(?:\.(\d{1,3}))?\/(\d+)$/.exec(s);
+  if(m && Math.max(+m[1],+m[2],+m[3])<=255) return {subnet:m[1]+'.'+m[2]+'.'+m[3]};
+  m=/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.?$/.exec(s);
+  if(m && Math.max(+m[1],+m[2],+m[3])<=255) return {subnet:m[1]+'.'+m[2]+'.'+m[3]};
+  m=/^(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})(?::(\d+))?(\/.*)?$/.exec(s);
+  if(m && m[1].split('.').every(o=>+o<=255)){
+    return {ip:m[1], port:m[2]?parseInt(m[2],10):80,
+            base:'http://'+m[1]+(m[2]?':'+m[2]:'')+(m[3]||'')};
+  }
+  return {base:v};
+}
+function buildIps(subs){
+  const ips=[];
+  for(let i=1;i<=254;i++) for(const s of subs) ips.push(s+'.'+i);
+  return ips;
+}
+function probeInfo(ip, port, timeoutMs){
+  return new Promise(resolve=>{
+    let ctrl=null;
+    const timer=setTimeout(()=>{ if(ctrl) ctrl.abort(); }, timeoutMs);
+    const opts={cache:'no-store'};
+    if(window.AbortController){ ctrl=new AbortController(); opts.signal=ctrl.signal; }
+    fetch('http://'+ip+':'+port+'/info', opts)
+      .then(r=>{ if(!r.ok) throw new Error('http '+r.status); return r.json(); })
+      .then(d=>{ clearTimeout(timer); resolve(!!(d && d.name==='Edge Agent')); })
+      .catch(()=>{ clearTimeout(timer); resolve(false); });
+  });
+}
+function scanPass(st, ips, port, timeoutMs, onProg){
+  // Only ever scan ONE /24. Probing foreign subnets poisons the browser: the
+  // gateway silently drops those SYNs, the kernel retries each for ~2 min, and
+  // Chrome keeps the half-open sockets, so its socket pool fills up and later
+  // requests (even to the device) never reach the wire. Same-subnet probes are
+  // safe: ARP for a dead local IP fails in ~3s and the socket dies quickly.
+  return new Promise(resolve=>{
+    const total=ips.length;
+    let next=0, done=0, alive=0, found=null, lastPct=-1;
+    function pump(){
+      while(!found && !st.stop && alive<128 && next<total){
+        const ip=ips[next++];
+        alive++;
+        probeInfo(ip, port, timeoutMs).then(ok=>{
+          alive--; done++;
+          if(ok && !found){ found={ip:ip, port:port}; resolve(found); return; }
+          if(found || st.stop){ if(st.stop && alive===0) resolve(null); return; }
+          const pct=Math.round(done*100/total);
+          if(pct!==lastPct){ lastPct=pct; onProg(pct); }
+          if(done>=total) resolve(null);
+          else pump();
+        });
+      }
+    }
+    pump();
+  });
+}
+function knownTarget(){
+  // Scanning is user-driven only: the base field must hold a subnet
+  // ("192.168.2.", ".../24") or a full private IP. No default ranges.
+  const p=parseBase($('base').value);
+  if(p.subnet) return {subnet:p.subnet};
+  if(p.ip && isPrivateIp(p.ip)) return {ip:p.ip, port:p.port};
+  return null;
+}
+function showScanBanner(key, params){
+  lastBanner = {key, params};
+  $('scanBannerMsg').textContent = t(key, params);
+  $('scanBanner').hidden=false;
+  $('base').focus();
+  const ub=$('urlBox'); ub.classList.remove('attn'); void ub.offsetWidth; ub.classList.add('attn');
+}
+function hideScanBanner(){ $('scanBanner').hidden=true; lastBanner=null; }
+function setScanLab(key){ lastScanLab = key; $('scanLab').textContent = t(key); }
+async function scanDevice(){
+  const btn=$('scanBtn');
+  hideScanBanner();
+  if(scanState){ scanState.stop=true; return; }
+  const known=knownTarget();
+  if(!known){
+    setConn('connSubnetRequired', null, 'bad');
+    showScanBanner('bannerNeedSubnet');
+    return;
+  }
+  const st={stop:false}; scanState=st;
+  setScanLab('scanStop'); setConn('connScanningPct', {pct: 0}, '');
+  let found=null;
+  if(known.subnet){
+    const s2=known.subnet;
+    found=await scanPass(st, buildIps([s2]), SCAN_PORT, 2000, pct=>setConn('connScanningSubnet', {subnet: s2, pct}, ''));
+    // one retry with a longer timeout: the device is single-threaded and a
+    // probe can miss it while it is busy serving another request
+    if(!found && !st.stop){
+      found=await scanPass(st, buildIps([s2]), SCAN_PORT, 3000, pct=>setConn('connRetryingSubnet', {subnet: s2, pct}, ''));
+    }
+  } else if(await probeInfo(known.ip, known.port, 3000)){
+    found={ip:known.ip, port:known.port};
+  }
+  scanState=null; setScanLab('scan');
+  if(found){
+    const base='http://'+found.ip+(found.port===80?'':':'+found.port);
+    $('base').value=base; localStorage.setItem('base', base);
+    await refreshAll();
+  } else if(st.stop){
+    setConn('connScanCancelled', null, '');
+  } else if(known.subnet){
+    setConn('connNoDeviceSubnet', {subnet: known.subnet}, 'bad');
+    showScanBanner('bannerNotFound', {subnet: known.subnet});
+  } else {
+    setConn('connNoDeviceIp', {ip: known.ip}, 'bad');
+  }
+}
+
+function fmtBytes(n){
+  if(n == null || isNaN(n)) return '—';
+  if(n < 1024) return n + ' B';
+  const units = ['KB','MB','GB','TB'];
+  let v = n, i = -1;
+  do { v /= 1024; i++; } while(v >= 1024 && i < units.length - 1);
+  return (v >= 100 ? v.toFixed(0) : v >= 10 ? v.toFixed(1) : v.toFixed(2)) + ' ' + units[i];
+}
+function fmtUptime(sec){
+  if(sec == null || isNaN(sec) || sec < 0) return '—';
+  const d = Math.floor(sec / 86400), h = Math.floor(sec % 86400 / 3600), m = Math.floor(sec % 3600 / 60);
+  if(d > 0) return t('upDh', {d, h});
+  if(h > 0) return t('upHm', {h, m});
+  return t('upMs', {m, s: Math.floor(sec % 60)});
+}
+function usagePct(used, total){ return total > 0 ? Math.min(100, used / total * 100) : 0; }
+function usageRow(name, used, total){
+  const row = document.createElement('div'); row.className = 'usage';
+  row.innerHTML =
+    '<div class="uhead"><span class="uname">' + name + '</span>' +
+    '<span class="unum"></span><span class="upct"></span></div>' +
+    '<div class="track"><div class="fill" style="width:0%"></div></div>';
+  updateUsageRow(row, used, total, true);
+  return row;
+}
+// deferWidth: first paint animates the bar growing from 0; later refreshes
+// update in place so the CSS transition glides between values (no flicker).
+function updateUsageRow(row, used, total, deferWidth){
+  const pct = usagePct(used, total);
+  row.querySelector('.unum').textContent = fmtBytes(used) + ' / ' + fmtBytes(total);
+  row.querySelector('.upct').textContent = pct.toFixed(1) + '%';
+  row.querySelector('.track').title = t('bytesTitle', {
+    used: used != null ? used.toLocaleString() : '',
+    total: total != null ? total.toLocaleString() : ''});
+  const fill = row.querySelector('.fill');
+  fill.className = 'fill' + (pct >= 90 ? ' crit' : pct >= 75 ? ' warn' : '');
+  const apply = () => { fill.style.width = pct + '%'; };
+  if (deferWidth) requestAnimationFrame(()=>requestAnimationFrame(apply)); else apply();
+}
+function statPill(key, val, okDot){
+  const s = document.createElement('div'); s.className = 'stat';
+  if(okDot !== undefined){
+    const dot = document.createElement('span'); dot.className = 'dot ' + (okDot ? 'ok' : 'bad'); s.appendChild(dot);
+  }
+  const k = document.createElement('span'); k.className = 'k'; k.textContent = key; s.appendChild(k);
+  const v = document.createElement('span'); v.className = 'v'; v.textContent = val; s.appendChild(v);
+  return s;
+}
+async function loadInfo(){
+  lastInfo = await getJSON('/info');
+  renderInfo();
+}
+// Split from the fetch so a language switch can rebuild the panel from the last
+// payload: the device may not answer at the moment the user switches.
+function renderInfo(){
+  const d = lastInfo;
+  if(!d) return;
+  const g = d.gpio || {};
+  const box = $('info');
+  const mem = d.memory || {}, disk = d.disk || {};
+  const wifiOn = d.wifi_connected === true || d.wifi_connected === 'true';
+  const statDefs = [
+    ['WiFi', wifiOn ? t('connConnected') : t('connDisconnected'), wifiOn],
+    [t('statUptime'), fmtUptime(d.uptime_seconds)],
+    [t('statChip'), d.chip || '—'],
+    [t('statFirmware'), d.version || '—'],
+    ['MicroPython', d.micropython || '—'],
+  ];
+  const rowDefs = [['PyHeap', mem.used_bytes, mem.total_bytes], [t('statDisk'), disk.used_bytes, disk.total_bytes]]
+    .concat((d.heap || []).map(h => [h.name || t('statHeap'), h.used_bytes, h.total_bytes]));
+  // Refresh in place when the structure is unchanged: rebuilding the DOM each
+  // cycle cleared the panel and restarted the bars from 0, causing flicker.
+  // The labels are part of that comparison, so a language switch - which
+  // changes them - rebuilds instead of leaving the old language in place.
+  if (box._stats && box._stats.length === statDefs.length &&
+      box._stats.every((s, i) => s.k === statDefs[i][0]) &&
+      box._rows && box._rows.length === rowDefs.length &&
+      rowDefs.every((r, i) => box._rows[i][0] === r[0])) {
+    statDefs.forEach((s, i) => {
+      box._stats[i].v.textContent = s[1];
+      if (box._stats[i].dot) box._stats[i].dot.className = 'dot ' + (s[2] ? 'ok' : 'bad');
+    });
+    rowDefs.forEach((r, i) => updateUsageRow(box._rows[i][1], r[1], r[2]));
+  } else {
+    box.innerHTML = '';
+    const stats = document.createElement('div'); stats.className = 'stats';
+    box._stats = statDefs.map(s => {
+      const el = statPill(s[0], s[1], s[2]); stats.appendChild(el);
+      return {k: s[0], dot: el.querySelector('.dot'), v: el.querySelector('.v')};
+    });
+    box.appendChild(stats);
+    box._rows = rowDefs.map(r => { const el = usageRow(r[0], r[1], r[2]); box.appendChild(el); return [r[0], el]; });
+  }
+  const gd = $('gpio');
+  const gkeys = Object.keys(g).sort((a,b)=>a-b);
+  if (gd.children.length === gkeys.length) {
+    gkeys.forEach((k, i) => {
+      const div = gd.children[i];
+      div.className = 'pin' + (g[k] ? ' hi' : '');
+      div.title = 'GPIO' + k + ': ' + g[k];
+      div.querySelector('.pname').textContent = 'GPIO' + k;
+    });
+  } else {
+    gd.innerHTML = '';
+    gkeys.forEach(k=>{
+      const div = document.createElement('div'); div.className = 'pin' + (g[k] ? ' hi' : '');
+      div.title = 'GPIO' + k + ': ' + g[k];
+      div.innerHTML = '<span class="led"></span><span class="pname">GPIO' + k + '</span>';
+      gd.appendChild(div);
+    });
+  }
+  lastUpdatedAt = new Date();
+  $('updatedAt').textContent = t('updatedAt', {time: lastUpdatedAt.toLocaleTimeString()});
+}
+
+// Manual refresh (also used by the auto timer): fetch + update connection pill.
+async function refreshInfo(){
+  try { await loadInfo(); setConn('connConnected', null, 'ok'); }
+  catch(e){ setConn('connFailed', null, 'bad'); }
+}
+
+// ---- Auto-refresh (toggle + interval, only on the status view) ----
+let autoTimer = null;
+function autoEnabled(){ return $('autoOn').checked; }
+function intervalSec(){ return Math.max(1, parseInt($('interval').value, 10) || 5); }
+function restartAuto(){
+  if (autoTimer){ clearInterval(autoTimer); autoTimer = null; }
+  if (curView === 'status' && autoEnabled()){
+    autoTimer = setInterval(refreshInfo, intervalSec() * 1000);
+  }
+}
+function onAutoChange(){
+  localStorage.setItem('esp32-ui.auto', autoEnabled() ? '1' : '0');
+  localStorage.setItem('esp32-ui.interval', String(intervalSec()));
+  restartAuto();
+}
+(function initAuto(){
+  $('autoOn').checked = localStorage.getItem('esp32-ui.auto') !== '0';  // default on
+  const iv = parseInt(localStorage.getItem('esp32-ui.interval'), 10);
+  if (iv && iv > 0) $('interval').value = iv;
+  restartAuto();
+})();
+
+// ---- Firmware update (OTA) ----
+// Keys into I18N; a state the device invents falls through t() unchanged.
+const OTA_STATES = {none:'otaStNone', ok:'otaStOk', trial:'otaStStarting', booting:'otaStStarting', bad:'otaStBad'};
+const OTA_LIMIT = 2 * 1024 * 1024;  // config.OTA_MAX_BUNDLE_BYTES on the device
+
+function renderOtaSay(){
+  if(!lastOtaSay) return;
+  const e=$('ota_st');
+  e.textContent = t(lastOtaSay.key, lastOtaSay.params);
+  e.className='stxt '+(lastOtaSay.cls||'');
+}
+function otaSay(key, params, cls){ lastOtaSay = {key, params, cls}; renderOtaSay(); }
+
+async function loadOta(){
+  try { lastOtaInfo = await getJSON('/ota'); }
+  catch(e){ lastOtaInfo = null; }
+  renderOtaInfo();
+}
+function renderOtaInfo(){
+  const box = $('otaInfo');
+  if(!lastOtaInfo){ box.innerHTML = '<div class="empty">' + t('otaUnknown') + '</div>'; return; }
+  const d = lastOtaInfo;
+  box.innerHTML = '';
+  const state = d.status || 'none';
+  // A dot on the state pill: green while the app in /app is the one running,
+  // red once the device had to fall back to the copy it kept.
+  [[t('otaRunning'), d.version || '—', undefined],
+   [t('otaState'), t(OTA_STATES[state] || state), state !== 'bad'],
+   [t('otaKept'), d.has_previous ? (d.fallback || '—') : t('otaNothing')]
+  ].forEach(p => box.appendChild(statPill(p[0], p[1], p[2])));
+}
+
+function pickOta(){ $('ota_file').click(); }
+
+async function onOtaPicked(input){
+  const f = input.files[0]; input.value = '';
+  if (!f) return;
+  if (!/\.tar$/i.test(f.name)) { otaSay('otaPickTar', null, 'err'); return; }
+  if (f.size > OTA_LIMIT) { otaSay('otaTooBig', {size: fmtBytes(f.size), limit: fmtBytes(OTA_LIMIT)}, 'err'); return; }
+  otaSay('otaUploading', {size: fmtBytes(f.size)});
+  let r;
+  try {
+    // The bundle is the raw body: no JSON envelope, no base64, so the device can
+    // write it to flash as it arrives.
+    const resp = await fetch(u('/ota'), {method:'POST', headers:{'Content-Type':'application/x-tar'}, body:f});
+    r = await resp.json();
+  } catch(e){ otaSay('otaUploadFailed', {err: e}, 'err'); return; }
+  if (r.error) { otaSay(String(r.error), null, 'err'); return; }  // the device's own wording
+  otaSay('otaInstalled', {ver: r.version || ''}, 'ok');
+  await otaWaitBack(false);
+}
+
+async function otaRollback(){
+  otaSay('otaRollingBack');
+  let r;
+  try { r = await postJSON('/ota/rollback', {}); }
+  catch(e){ otaSay('otaRollbackFailed', {err: e}, 'err'); return; }
+  if (r.error) { otaSay(String(r.error), null, 'err'); return; }  // the device's own wording
+  otaSay('otaGoingBack', {ver: r.version || ''}, 'ok');
+  await otaWaitBack(true);
+}
+
+// The device resets about a second after it answers, so this polls through a
+// gap where nothing replies and reports what it comes back as.
+async function otaWaitBack(rolledBack){
+  for (let i = 0; i < 45; i++){
+    await new Promise(res => setTimeout(res, 2000));
+    let d;
+    try { d = await getJSON('/ota'); }
+    catch(e){ otaSay('otaWaiting'); continue; }
+    if (d.status === 'ok' || d.status === 'bad'){
+      await loadOta();
+      if (rolledBack) otaSay('otaBackOn', {ver: d.version || ''}, 'ok');
+      else if (d.status === 'ok') otaSay('otaUpdatedTo', {ver: d.version || ''}, 'ok');
+      else otaSay('otaNewAppFailed', {ver: d.version || ''}, 'err');
+      return;
+    }
+    otaSay('otaStarting');
+  }
+  otaSay('otaNoComeBack', null, 'err');
+}
+
+async function loadConfig(){
+  const d = await getJSON('/config');
+  $('cfg_reffort').value = d.reasoning_effort || '';
+  $('cfg_base').value = d.base_url || ''; $('cfg_model').value = d.model || ''; $('cfg_key').value = '';
+  $('cfg_venabled').checked = d.voice_enabled !== false; toggleVoiceFields();
+  const vol = (typeof d.volume === 'number') ? d.volume : 100;
+  $('cfg_vol').value = vol; $('cfg_vol_val').textContent = vol;
+  $('cfg_asr_host').value = d.asr_ws_host || ''; $('cfg_asr_key').value = ''; $('cfg_asr_model').value = d.asr_ws_model || '';
+  $('cfg_tts_host').value = d.tts_ws_host || ''; $('cfg_tts_key').value = ''; $('cfg_tts_model').value = d.tts_ws_model || '';
+  $('cfg_tts_rate').value = d.tts_ws_sample_rate || ''; $('cfg_mtr').value = d.max_tool_rounds || '';
+  $('cfg_sto').value = (typeof d.session_timeout_min === 'number') ? d.session_timeout_min : '';
+  window.__spDefault = d.system_prompt_default || '';
+  $('cfg_sysprompt').value = d.system_prompt || window.__spDefault;
+}
+async function saveConfig(){
+  const sp = $('cfg_sysprompt').value.trim();
+  const spDef = (window.__spDefault || '').trim();
+  const o = {reasoning_effort:$('cfg_reffort').value, base_url:$('cfg_base').value, model:$('cfg_model').value,
+             voice_enabled:$('cfg_venabled').checked,
+             volume:parseInt($('cfg_vol').value, 10),
+             asr_ws_host:$('cfg_asr_host').value, asr_ws_model:$('cfg_asr_model').value,
+             tts_ws_host:$('cfg_tts_host').value, tts_ws_model:$('cfg_tts_model').value,
+             tts_ws_sample_rate:parseInt($('cfg_tts_rate').value, 10)||undefined,
+             max_tool_rounds:parseInt($('cfg_mtr').value)||undefined,
+             system_prompt: sp === spDef ? '' : sp};
+  const sto = $('cfg_sto').value.trim();
+  if (sto !== '') o.session_timeout_min = parseInt(sto, 10) || 0;
+  const k = $('cfg_key').value; if(k) o.api_key = k;
+  const ak = $('cfg_asr_key').value; if(ak) o.asr_ws_api_key = ak;
+  const tk = $('cfg_tts_key').value; if(tk) o.tts_ws_api_key = tk;
+  const r = await postJSON('/config', o); $('cfg_st').textContent = r.status || r.error || JSON.stringify(r); await loadConfig();
+}
+async function saveVolume(){
+  const v = parseInt($('cfg_vol').value, 10);
+  $('cfg_vol_val').textContent = v;
+  const r = await postJSON('/config', {volume: v});
+  if(r.error){ $('cfg_st').textContent = String(r.error); return; }
+  testVolume();  // audible preview of the new level
+}
+async function testVolume(){
+  try{
+    const r = await postJSON('/volume/test', {});
+    if(r.error){ $('cfg_st').textContent = String(r.error); }
+  }catch(e){}
+}
+function toggleVoiceFields(){
+  $('voice_fields').style.opacity = $('cfg_venabled').checked ? '1' : '.4';
+  $('voice_fields').style.pointerEvents = $('cfg_venabled').checked ? 'auto' : 'none';
+}
+
+// ---- Config backup & restore ----
+// Envelope fields are metadata about the file, not settings to restore.
+const BK_ENVELOPE = ['kind','version','exported_at','config'];
+const BK_SECRETS = ['api_key','asr_ws_api_key','tts_ws_api_key'];
+let bkData = null;
+
+function renderBk(){
+  if(!lastBk) return;
+  const el = $('bk_st');
+  el.textContent = t(lastBk.key, lastBk.params);
+  el.className = 'stxt' + (lastBk.cls ? ' ' + lastBk.cls : '');
+}
+function bkStatus(key, params, cls){ lastBk = {key, params, cls}; renderBk(); }
+function backupName(){
+  const d = new Date(), p = n => String(n).padStart(2,'0');
+  return 'edge-agent-config-' + d.getFullYear() + p(d.getMonth()+1) + p(d.getDate())
+       + '-' + p(d.getHours()) + p(d.getMinutes()) + '.json';
+}
+function downloadText(name, text){
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([text], {type:'application/json'}));
+  a.download = name;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+}
+async function exportConfig(){
+  bkStatus('bkExporting');
+  try{
+    const d = await getJSON('/config/export');
+    if(d.error){ bkStatus(String(d.error), null, 'err'); return; }  // the device's own wording
+    const name = backupName();
+    downloadText(name, JSON.stringify(d, null, 2));
+    bkStatus('bkSaved', {name}, 'ok');
+  }catch(e){ bkStatus('bkExportFailed', {err: e}, 'err'); }
+}
+function pickBackup(){ $('bk_file').click(); }
+async function onBackupPicked(input){
+  const f = input.files && input.files[0];
+  input.value = '';   // picking the same file again must still fire change
+  if(!f) return;
+  let data;
+  try{ data = JSON.parse(await f.text()); }
+  catch(e){ bkStatus('bkNotJson', {msg: e.message}, 'err'); return; }
+  const cfg = (data && data.config && typeof data.config === 'object') ? data.config : data;
+  if(!cfg || typeof cfg !== 'object' || Array.isArray(cfg)){
+    bkStatus('bkNoSettings', {name: f.name}, 'err'); return;
+  }
+  bkData = data;
+  renderBackup(cfg, f.name, data);
+  $('bk_modal').style.display = 'flex';
+}
+function bkValue(k, v){
+  if(BK_SECRETS.includes(k)) return v ? '••••••••' : t('bkEmptyValue');
+  if(v === null || v === undefined || v === '') return t('bkEmptyValue');
+  const s = (typeof v === 'object') ? JSON.stringify(v) : String(v);
+  return s.length > 60 ? s.slice(0, 57) + '…' : s;
+}
+function renderBackup(cfg, name, env){
+  lastBackup = {cfg, name, env};   // so a language switch can redraw the list
+  const src = $('bk_src');
+  src.textContent = name;
+  if(env && env.exported_at > 1600000000){   // device clock is 1970 before NTP sync
+    src.textContent += t('bkExportedSuffix', {when: new Date(env.exported_at * 1000).toLocaleString()});
+  }
+  const box = $('bk_list'); box.innerHTML = '';
+  for(const k of Object.keys(cfg)){
+    if(BK_ENVELOPE.includes(k)) continue;
+    const row = document.createElement('div'); row.className = 'bk-item';
+    const key = document.createElement('span'); key.className = 'k'; key.textContent = k;
+    const val = document.createElement('span'); val.className = 'v'; val.textContent = bkValue(k, cfg[k]);
+    row.appendChild(key); row.appendChild(val); box.appendChild(row);
+  }
+  if(!box.children.length){
+    const e = document.createElement('div'); e.className = 'empty'; e.style.padding = '8px 10px';
+    e.textContent = t('bkFileEmpty'); box.appendChild(e);
+  }
+}
+function closeBackupModal(){ $('bk_modal').style.display = 'none'; bkData = null; lastBackup = null; }
+async function confirmBackup(){
+  if(!bkData) return;
+  const btn = $('bk_ok'); btn.disabled = true; bkBusy = true; btn.textContent = t('bkRestoring');
+  try{
+    const r = await postJSON('/config/import', bkData);
+    if(r.error){ bkStatus(String(r.error), null, 'err'); }  // the device's own wording
+    else {
+      bkStatus('bkRestored', {n: (r.applied && r.applied.length) || 0}, 'ok');
+      closeBackupModal();
+      await loadConfig(); await loadChannels();
+    }
+  }catch(e){ bkStatus('bkRestoreFailed', {err: e}, 'err'); }
+  btn.disabled = false; bkBusy = false; btn.textContent = t('restoreBtn');
+}
+
+// ---- Channels ----
+// Keys into I18N for the channels this page knows; a channel it does not know
+// keeps its own name, capitalised.
+const CH_DISPLAY = {web:'chWeb', voice:'chVoice', weixin:'chWeixin'};
+async function loadChannels(){
+  const cfg = await getJSON('/config');
+  lastChannels = Object.assign({web:true, voice:true, weixin:false}, cfg.channels);
+  renderChannels();
+  if(lastChannels && 'weixin' in lastChannels) await renderWeixinStatus();
+}
+function renderChannels(){
+  const d = lastChannels;
+  if(!d) return;
+  const box = $('ch_list'); box.innerHTML = '';
+  const forced = ['web'];
+  const names = Object.keys(d).sort((a,b) => (forced.includes(b)?1:0) - (forced.includes(a)?1:0));
+  for(const name of names){
+    const enabled = d[name];
+    const row = document.createElement('div'); row.className = 'row';
+    const lab = document.createElement('label');
+    lab.textContent = CH_DISPLAY[name] ? t(CH_DISPLAY[name]) : (name.charAt(0).toUpperCase() + name.slice(1));
+    row.appendChild(lab);
+    if(forced.includes(name)){
+      const badge = document.createElement('span');
+      badge.className = 'ch-badge'; badge.textContent = t('chAlwaysOn');
+      row.appendChild(badge);
+    } else {
+      const sw = document.createElement('label'); sw.className = 'switch';
+      const cb = document.createElement('input'); cb.type = 'checkbox';
+      cb.checked = enabled !== false; cb.dataset.ch = name;
+      cb.onchange = function(){ saveChannel(name, this.checked); };
+      const sl = document.createElement('span'); sl.className = 'slider';
+      sw.appendChild(cb); sw.appendChild(sl);
+      row.appendChild(sw);
+    }
+    if(name === 'weixin'){
+      const wrap = document.createElement('span'); wrap.style.cssText = 'display:inline-flex;align-items:center;gap:8px;margin-top:2px';
+      const st = document.createElement('span'); st.className = 'stxt'; st.id = 'weixin_st'; st.style.marginLeft = '0';
+      const btn = document.createElement('button'); btn.className = 'btn sm'; btn.id = 'weixin_btn';
+      btn.textContent = t('chConnect'); btn.onclick = function(){ weixinConnect(false); };
+      const lo = document.createElement('button'); lo.className = 'btn sm'; lo.id = 'weixin_logout';
+      lo.textContent = t('chLogout'); lo.style.display = 'none'; lo.onclick = weixinLogout;
+      wrap.appendChild(st); wrap.appendChild(btn); wrap.appendChild(lo);
+      row.appendChild(wrap);
+    }
+    box.appendChild(row);
+  }
+  // Painted once the row is in the document: the WeChat status looks its
+  // elements up by id, and building the row above has not attached them yet.
+  paintWeixinStatus();
+}
+async function saveChannel(name, enabled){
+  const ch = {}; ch[name] = enabled;
+  const r = await postJSON('/config', {channels: ch});
+  const st = $('ch_st');
+  if(r.error){ st.textContent = String(r.error); st.className = 'stxt err'; }
+  else { st.textContent = ''; st.className = 'stxt'; }
+  if(name === 'voice'){ $('cfg_venabled').checked = enabled; toggleVoiceFields(); }
+}
+
+// ---- WeChat (weixin channel) ----
+let wxSession = null, wxTimer = null, wxErrors = 0, lastWxStatus = null;
+// The fetch and the paint are separate so a language switch can redraw the
+// status from what was last fetched instead of asking the device again.
+async function renderWeixinStatus(){
+  try{ lastWxStatus = await getJSON('/weixin/status'); }
+  catch(e){ lastWxStatus = {error:true}; }
+  paintWeixinStatus();
+}
+function paintWeixinStatus(){
+  const st = $('weixin_st'), btn = $('weixin_btn'), lo = $('weixin_logout');
+  if(!st || !lastWxStatus) return;
+  if(lastWxStatus.error){ st.textContent = ''; btn.style.display = 'none'; lo.style.display = 'none'; return; }
+  const d = lastWxStatus;
+  if(d.connected){
+    st.textContent = t('connConnected'); st.className = 'stxt ok';
+    btn.style.display = 'none'; lo.style.display = '';
+  } else if(d.auth_expired){
+    st.textContent = t('chLoginExpired'); st.className = 'stxt err';
+    btn.style.display = ''; btn.textContent = t('chReconnect'); lo.style.display = 'none';
+  } else {
+    st.textContent = t('chNotConnected'); st.className = 'stxt';
+    btn.style.display = ''; btn.textContent = t('chConnect'); lo.style.display = 'none';
+  }
+}
+function renderWxMsg(){ if(lastWxMsg) $('wx_msg').textContent = t(lastWxMsg.key, lastWxMsg.params); }
+function wxSay(key, params){ lastWxMsg = {key, params}; renderWxMsg(); }
+async function weixinConnect(force){
+  $('wx_modal').style.display = 'flex';
+  $('wx_retry').style.display = 'none';
+  $('wx_verify_wrap').style.display = 'none';
+  $('wx_qr').removeAttribute('src');
+  wxSay('wxRequesting');
+  clearTimeout(wxTimer);
+  try{
+    const r = await postJSON('/weixin/qr/start', {force: !!force});
+    if(r.status === 'connected'){ weixinCloseModal(); loadChannels(); return; }
+    if(!r.qrcode_id) throw new Error(r.error || t('wxNoQr'));
+    wxSession = r.qrcode_id; wxErrors = 0;
+    $('wx_qr').src = 'https://api.qrserver.com/v1/create-qr-code/?size=220x220&data=' + encodeURIComponent(r.qr_content);
+    $('wx_qr_content').textContent = r.qr_content;
+    wxSay('wxScanToConnect');
+    weixinPoll();
+  }catch(e){
+    wxSay('wxQrFailed', {msg: e.message || e});
+    $('wx_retry').style.display = '';
+  }
+}
+function weixinPoll(verifyCode){
+  wxTimer = setTimeout(async () => {
+    if(!wxSession) return;
+    try{
+      const r = await postJSON('/weixin/qr/poll', {qrcode_id: wxSession, verify_code: verifyCode || ''});
+      if(r.status === 'waiting' || r.status === 'pending'){
+        wxSay('wxScanToConnect'); weixinPoll();
+      } else if(r.status === 'scanned'){
+        wxSay('wxScanned'); weixinPoll();
+      } else if(r.status === 'need_verifycode'){
+        $('wx_verify_wrap').style.display = '';
+        wxSay('wxEnterCode');
+      } else if(r.status === 'connected'){
+        weixinCloseModal();
+        await postJSON('/config', {channels: {weixin: true}});  // login implies enable
+        loadChannels();
+      } else {
+        wxSession = null;
+        $('wx_qr').removeAttribute('src');
+        wxSay(r.message || 'wxExpired');   // a message from the device passes through t()
+        $('wx_retry').style.display = '';
+      }
+    }catch(e){
+      if(++wxErrors < 5){ weixinPoll(verifyCode); }
+      else {
+        wxSession = null;
+        wxSay('wxNetworkError', {msg: e.message || e});
+        $('wx_retry').style.display = '';
+      }
+    }
+  }, 2000);
+}
+function weixinSubmitVerify(){
+  $('wx_verify_wrap').style.display = 'none';
+  wxSay('wxVerifying');
+  weixinPoll($('wx_verify').value.trim());
+}
+function weixinCloseModal(){
+  clearTimeout(wxTimer); wxSession = null;
+  $('wx_modal').style.display = 'none';
+}
+async function weixinLogout(){
+  await postJSON('/weixin/logout', {});
+  renderWeixinStatus();
+}
+
+// ---- Model picker (browser -> LLM endpoint directly) ----
+let MODELS = [];
+let mSel = -1;
+
+function modelsUrl(baseUrl){
+  let b = (baseUrl || '').trim().replace(/\/+$/, '');
+  if(!b) return null;
+  if(!/^https?:\/\//i.test(b)) b = 'https://' + b;
+  return /\/v1$/i.test(b) ? b + '/models' : b + '/v1/models';
+}
+function renderModelStatus(){
+  if(!lastModel) return;
+  const st = $('model_st');
+  $('model_status_row').style.display = '';
+  st.textContent = t(lastModel.key, lastModel.params);
+  st.className = 'stxt' + (lastModel.cls ? ' ' + lastModel.cls : '');
+}
+function setModelStatus(key, params, cls){ lastModel = {key, params, cls}; renderModelStatus(); }
+function setFetchTxt(key){ lastFetchTxt = key; $('fetchTxt').textContent = t(key); }
+async function fetchModels(auto){
+  const url = modelsUrl($('cfg_base').value);
+  const apiKey = $('cfg_key').value.trim();
+  if(!url){ if(!auto) setModelStatus('mdlNeedBaseUrl', null, 'err'); return; }
+  const btn = $('fetchBtn'); btn.classList.add('loading'); btn.disabled = true;
+  setFetchTxt('mdlFetching');
+  if(!auto) setModelStatus('mdlRequesting', {url});
+  try{
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 15000);
+    const hdrs = apiKey ? {'Authorization': 'Bearer ' + apiKey} : {}; const r = await fetch(url, {headers: hdrs, signal: ctrl.signal});
+    clearTimeout(timer);
+    if(!r.ok) throw new Error('HTTP ' + r.status);
+    const d = await r.json();
+    MODELS = ((d.data || []).map(m => m.id).filter(Boolean)).sort();
+    setModelStatus('mdlFetched', {n: MODELS.length}, 'ok');
+    renderModels($('cfg_model').value);
+    if(!auto) openModels();
+  }catch(e){
+    MODELS = [];
+    renderModels('');
+    setModelStatus('mdlFetchFailed',
+      {reason: e.name === 'AbortError' ? t('mdlTimedOut') : (e.message || e)}, 'err');
+  }finally{
+    btn.classList.remove('loading'); btn.disabled = false;
+    setFetchTxt('fetchModels');
+  }
+}
+function renderModels(filter){
+  const c = $('mlist'); c.innerHTML = ''; mSel = -1;
+  const f = (filter || '').trim().toLowerCase();
+  const items = MODELS.filter(m => !f || m.toLowerCase().includes(f));
+  if(!items.length){
+    const d = document.createElement('div'); d.className = 'mempty';
+    d.textContent = MODELS.length ? t('mdlNoMatch') : t('mdlNoneYet');
+    c.appendChild(d); return;
+  }
+  items.forEach(m => {
+    const d = document.createElement('div'); d.className = 'mitem'; d.textContent = m;
+    d.onmousedown = e => { e.preventDefault(); pickModel(m); };
+    c.appendChild(d);
+  });
+}
+function openModels(){ if(!$('mlist').children.length) renderModels($('cfg_model').value); $('mlist').classList.add('open'); }
+function closeModels(){ $('mlist').classList.remove('open'); mSel = -1; }
+function pickModel(m){ $('cfg_model').value = m; closeModels(); }
+function onModelInput(v){ renderModels(v); openModels(); }
+function modelKey(e){
+  const list = $('mlist');
+  const items = Array.prototype.slice.call(list.querySelectorAll('.mitem'));
+  if(e.key === 'ArrowDown' || e.key === 'ArrowUp'){
+    e.preventDefault();
+    if(!list.classList.contains('open')){ openModels(); return; }
+    if(!items.length) return;
+    mSel = e.key === 'ArrowDown' ? (mSel + 1) % items.length : (mSel - 1 + items.length) % items.length;
+    items.forEach((el, i) => el.classList.toggle('sel', i === mSel));
+    items[mSel].scrollIntoView({block: 'nearest'});
+  }else if(e.key === 'Enter' && list.classList.contains('open') && items[mSel]){
+    e.preventDefault(); pickModel(items[mSel].textContent);
+  }else if(e.key === 'Escape'){ closeModels(); }
+}
+// auto-fetch once base_url / api_key are filled in
+$('cfg_base').addEventListener('change', () => fetchModels(true));
+$('cfg_key').addEventListener('change', () => fetchModels(true));
+
+async function loadSkills(){
+  lastSkills = await getJSON('/skills');
+  renderSkills();
+}
+function renderSkills(){
+  const arr = lastSkills;
+  if(!arr) return;
+  const c = $('skills'); c.innerHTML = '';
+  if(!arr.length){ c.innerHTML = '<div class="empty">' + t('skNone') + '</div>'; return; }
+  arr.forEach(s=>{
+    const div = document.createElement('div');
+    const ic = document.createElement('span'); ic.className = 'sk-ic';
+    ic.innerHTML = '<svg class="ic"><use href="#i-zap"/></svg>'; div.appendChild(ic);
+    const left = document.createElement('div'); left.style.flex = '1'; left.style.minWidth = '0';
+    const b = document.createElement('b'); b.textContent = s.name; left.appendChild(b);
+    if(s.builtin){ const tag = document.createElement('span'); tag.className = 'tag'; tag.textContent = t('skBuiltin'); left.appendChild(tag); }
+    const d = document.createElement('span'); d.className = 'd'; d.textContent = s.description || '';
+    if(s.description){ d.title = s.description; }
+    left.appendChild(d);
+    div.appendChild(left);
+    if(!s.builtin){
+      const btn = document.createElement('button'); btn.className = 'ghost btn';
+      btn.innerHTML = '<svg class="ic"><use href="#i-trash"/></svg>';
+      btn.appendChild(document.createTextNode(t('skDelete')));
+      btn.onclick = ()=>delSkill(s.name);
+      div.appendChild(btn);
+    }
+    c.appendChild(div);
+  });
+}
+async function uploadSkill(){
+  let params; try{ params = JSON.parse($('sk_params').value); }catch(e){ $('sk_st').textContent = t('skBadParams'); return; }
+  const r = await postJSON('/skills', {name:$('sk_name').value, description:$('sk_desc').value, parameters:params, code:$('sk_code').value});
+  $('sk_st').textContent = r.status || r.error || JSON.stringify(r); await loadSkills();
+}
+async function delSkill(n){ await delJSON('/skills', {name:n}); await loadSkills(); }
+
+// ---- Chat ----
+const CHAT_KEY = 'esp32-ui.chat';
+let chatBusy = false;
+
+function nearBottom(el){ return el.scrollHeight - el.scrollTop - el.clientHeight < 80; }
+function scrollChat(force){
+  const c = $('chat');
+  if(force || nearBottom(c)) c.scrollTop = c.scrollHeight;
+}
+function hideEmpty(){ const e = $('chatEmpty'); if(e) e.style.display = 'none'; }
+// One-click clear: wipe local messages instantly; /new resets the backend
+// session in the background (fire-and-forget) so the UI never blocks on it.
+function clearChat(){
+  $('chat').querySelectorAll('.brow').forEach(r => r.remove());
+  removeTyping();
+  try{ localStorage.removeItem(CHAT_KEY); }catch(e){}
+  const e = $('chatEmpty'); if(e) e.style.display = '';
+  postJSON('/agent', {message:'/new'}).catch(()=>{});
+}
+function fillMsg(text){ const m = $('msg'); m.value = text; autoGrow(m); updateCmds(); m.focus(); }
+
+function iconSvg(id){ return '<svg class="ic"><use href="#' + id + '"/></svg>'; }
+// whoKey is an I18N key for the speaker label. A chat restored from an older
+// build of this page carries the literal text instead, which t() hands back
+// unchanged, so old history still reads the way it was saved.
+function makeRow(cls, whoKey){
+  const row = document.createElement('div'); row.className = 'brow ' + (cls === 'u' ? 'u' : 'a');
+  const av = document.createElement('div'); av.className = 'avatar';
+  av.innerHTML = iconSvg(cls === 'u' ? 'i-user' : 'i-bot');
+  const col = document.createElement('div'); col.className = 'bcol';
+  if(whoKey){
+    const h = document.createElement('div'); h.className = 'who';
+    h.textContent = t(whoKey);
+    h.setAttribute('data-who-key', whoKey);   // redrawn by applyDynamicI18n
+    col.appendChild(h);
+  }
+  row.appendChild(av); row.appendChild(col);
+  return {row, col};
+}
+
+// navigator.clipboard exists only in secure contexts; the page is served over
+// plain http from the device, so fall back to a selection copy there.
+function copyText(text){
+  if(navigator.clipboard && navigator.clipboard.writeText) return navigator.clipboard.writeText(text);
+  return new Promise((resolve, reject) => {
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    ta.style.cssText = 'position:fixed;top:0;left:0;opacity:0';
+    document.body.appendChild(ta);
+    ta.focus(); ta.select();
+    try{ document.execCommand('copy') ? resolve() : reject(new Error('copy failed')); }
+    catch(e){ reject(e); }
+    ta.remove();
+  });
+}
+function addCopyButtons(container){
+  container.querySelectorAll('pre').forEach(pre => {
+    const code = pre.textContent;   // capture before the button joins the <pre>
+    const btn = document.createElement('button');
+    btn.className = 'copybtn'; btn.textContent = t('copyBtn');
+    btn.setAttribute('data-i18n', 'copyBtn');   // a language switch resets it
+    btn.onclick = () => { copyText(code).then(()=>{ btn.textContent=t('copiedBtn'); setTimeout(()=>btn.textContent=t('copyBtn'),1500); }).catch(()=>{}); };
+    pre.appendChild(btn);
+  });
+}
+
+function addMsg(cls, text, who, persist){
+  const c = $('chat'); const wasBottom = nearBottom(c);
+  hideEmpty();
+  const {row, col} = makeRow(cls, who);
+  const b = document.createElement('div'); b.className = 'bubble ' + cls;
+  b.dataset.raw = text;
+  if(cls === 'a' && window.marked){ b.classList.add('md'); b.innerHTML = marked.parse(text); addCopyButtons(b); }
+  else{ b.textContent = text; }
+  col.appendChild(b);
+  c.appendChild(row); scrollChat(wasBottom);
+  if(persist !== false && cls !== 'muted') saveChat();
+  return b;
+}
+
+function addTyping(){
+  const c = $('chat'); const wasBottom = nearBottom(c);
+  hideEmpty();
+  const {row, col} = makeRow('a', 'whoAgent'); row.id = 'typingRow';
+  const b = document.createElement('div'); b.className = 'bubble a';
+  b.innerHTML = '<span class="typing"><i></i><i></i><i></i></span>';
+  col.appendChild(b); c.appendChild(row); scrollChat(wasBottom);
+  return row;
+}
+function removeTyping(){ const row = $('typingRow'); if(row) row.remove(); }
+
+function saveChat(){
+  const msgs = [];
+  $('chat').querySelectorAll('.brow').forEach(row => {
+    if(row.id === 'typingRow') return;
+    const who = row.querySelector('.who');
+    const b = row.querySelector('.bubble');
+    if(!b || b.classList.contains('muted')) return;
+    const cls = b.classList.contains('u') ? 'u' : b.classList.contains('e') ? 'e' : 'a';
+    msgs.push({cls, text: b.dataset.raw || b.textContent,
+               who: who ? (who.getAttribute('data-who-key') || who.textContent) : ''});
+  });
+  try{ localStorage.setItem(CHAT_KEY, JSON.stringify(msgs.slice(-50))); }catch(e){}
+}
+function loadChat(){
+  try{
+    const msgs = JSON.parse(localStorage.getItem(CHAT_KEY) || '[]');
+    msgs.forEach(m => addMsg(m.cls, m.text, m.who, false));
+  }catch(e){}
+}
+function autoGrow(el){ el.style.height = '44px'; el.style.height = Math.min(140, el.scrollHeight) + 'px'; }
+
+// ---- Slash command palette ----
+// Built-in slash commands; keep the list in sync with Bus._register_builtins in
+// src/app/bus.py. The descriptions are I18N keys - the device's own /help output
+// is separate text and stays in whatever language the device writes it in.
+const COMMANDS = [
+  {name:'/new', usage:'/new', description:'cmdNew'},
+  {name:'/history', usage:'/history [n]', description:'cmdHistory'},
+  {name:'/status', usage:'/status', description:'cmdStatus'},
+  {name:'/help', usage:'/help', description:'cmdHelp'},
+];
+let cmdItems = [], cmdSel = 0;
+function cmdsOpen(){ return $('cmdlist').classList.contains('open'); }
+function closeCmds(){ $('cmdlist').classList.remove('open'); cmdItems = []; }
+function updateCmds(){
+  const v = $('msg').value;
+  const token = v.startsWith('/') && !/\s/.test(v) ? v.toLowerCase() : '';
+  if(!token){ closeCmds(); return; }
+  cmdItems = COMMANDS.filter(c => c.name.startsWith(token));
+  if(!cmdItems.length){ closeCmds(); return; }
+  cmdSel = 0;
+  const box = $('cmdlist'); box.innerHTML = '';
+  const hint = document.createElement('div'); hint.className = 'cmdhint'; hint.textContent = t('cmdHint');
+  box.appendChild(hint);
+  cmdItems.forEach((c, i) => {
+    const d = document.createElement('div');
+    d.className = 'cmditem' + (i === cmdSel ? ' sel' : '');
+    d.innerHTML = '<span class="cmdname"></span><span class="cmddesc"></span><span class="go">↵</span>';
+    d.querySelector('.cmdname').textContent = c.usage || c.name;
+    d.querySelector('.cmddesc').textContent = t(c.description);
+    d.onmouseenter = () => selCmd(i);
+    d.onmousedown = e => { e.preventDefault(); pickCmd(i); };
+    box.appendChild(d);
+  });
+  box.classList.add('open');
+}
+function selCmd(i){
+  cmdSel = i;
+  document.querySelectorAll('#cmdlist .cmditem').forEach((el, j) => {
+    el.classList.toggle('sel', j === i);
+    if(j === i) el.scrollIntoView({block:'nearest'});
+  });
+}
+function pickCmd(i){
+  const c = cmdItems[i]; if(!c) return;
+  const m = $('msg');
+  m.value = c.name;
+  closeCmds(); autoGrow(m); m.focus();
+}
+
+function sendKey(e){
+  if(cmdsOpen()){
+    if(e.key === 'ArrowDown'){ e.preventDefault(); selCmd((cmdSel + 1) % cmdItems.length); return; }
+    if(e.key === 'ArrowUp'){ e.preventDefault(); selCmd((cmdSel - 1 + cmdItems.length) % cmdItems.length); return; }
+    if(e.key === 'Tab' || (e.key === 'Enter' && !e.shiftKey && !e.ctrlKey && !e.metaKey)){ e.preventDefault(); pickCmd(cmdSel); return; }
+    if(e.key === 'Escape'){ closeCmds(); return; }
+  }
+  if(e.key === 'Enter' && !e.shiftKey && !e.ctrlKey && !e.metaKey){ e.preventDefault(); sendMsg(); }
+}
+function setBusy(v){
+  chatBusy = v;
+  $('msg').disabled = v;
+  document.querySelectorAll('.composer button').forEach(b => b.disabled = v);
+}
+async function sendMsg(){
+  if(chatBusy) return;
+  const m = $('msg'); const text = m.value.trim(); if(!text) return;
+  m.value = ''; autoGrow(m); addMsg('u', text, 'whoYou');
+  setBusy(true);
+  addTyping();
+  try{
+    const r = await postJSON('/agent', {message:text}); removeTyping();
+    if(r.reply) addMsg('a', r.reply, 'whoAgent'); else addMsg('e', r.error || JSON.stringify(r), 'whoAgent');
+  }catch(e){ removeTyping(); addMsg('e', t('chatRequestFailed', {err: e}), 'whoAgent'); }
+  setBusy(false);
+  m.focus();
+}
+applyLang();   // the dynamic pass: every function and cache it touches is defined by now
+loadChat();
+
+refreshAll();
+</script>
+</body>
+</html>
